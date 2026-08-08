@@ -15,8 +15,8 @@ export const PICKER_COLORS = {
   /** Countries inside the selected continent/globe scope, not individually selected. */
   inScope: "#f59e0b", // amber-500
   inScopeHover: "#fbbf24", // amber-400
-  /** The exact thing that's selected (a single country, or an active continent/globe button). Matches the primary CTA color. */
-  selected: "#10b981", // emerald-500
+  /** The exact thing that's selected (a single country, or an active continent/globe button). Same amber as `inScope` so a directly-selected country reads the same as a continent-scoped one. */
+  selected: "#f59e0b", // amber-500 (same as inScope)
   /** No Street View coverage, not selectable. */
   unavailable: "#334155", // slate-700
   /** Map feature borders. */

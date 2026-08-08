@@ -4,20 +4,30 @@ import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { describeScope } from "@/lib/geo/countries-coverage";
 import { saveGame } from "@/lib/storage/game-history";
-import type { CompletedRound, GameScope } from "@/types/game";
+import type { AiRoundResult, CompletedRound, GameScope } from "@/types/game";
 import { MAX_SCORE_PER_GAME, MAX_SCORE_PER_ROUND } from "@/types/game";
 
 interface SummaryScreenProps {
   scope: GameScope;
   rounds: CompletedRound[];
+  aiResults: Record<number, AiRoundResult>;
 }
 
-export default function SummaryScreen({ scope, rounds }: SummaryScreenProps) {
+export default function SummaryScreen({ scope, rounds, aiResults }: SummaryScreenProps) {
   const router = useRouter();
   const saved = useRef(false);
 
+  function aiScoreFor(roundIndex: number): number | null {
+    const r = aiResults[roundIndex];
+    return r?.status === "success" ? r.aiScore : null;
+  }
+  function aiDistanceFor(roundIndex: number): number | null {
+    const r = aiResults[roundIndex];
+    return r?.status === "success" ? r.aiDistanceKm : null;
+  }
+
   const totalScore = rounds.reduce((sum, r) => sum + r.score, 0);
-  const totalAiScore = rounds.reduce((sum, r) => sum + (r.aiScore ?? 0), 0);
+  const totalAiScore = rounds.reduce((sum, r) => sum + (aiScoreFor(r.roundIndex) ?? 0), 0);
 
   useEffect(() => {
     if (saved.current) return;
@@ -26,24 +36,29 @@ export default function SummaryScreen({ scope, rounds }: SummaryScreenProps) {
       id: crypto.randomUUID(),
       playedAt: new Date().toISOString(),
       scope,
-      rounds: rounds.map((r) => ({
-        roundIndex: r.roundIndex,
-        actual: r.actual,
-        guess: r.guess,
-        aiGuess: r.analysis
-          ? {
-              lat: r.analysis.aiGuess.lat,
-              lng: r.analysis.aiGuess.lng,
-              country: r.analysis.aiGuess.country,
-              confidence: r.analysis.aiGuess.confidence,
-            }
-          : null,
-        distanceKm: r.distanceKm,
-        aiDistanceKm: r.aiDistanceKm,
-        score: r.score,
-        aiScore: r.aiScore,
-        maxScore: MAX_SCORE_PER_ROUND,
-      })),
+      rounds: rounds.map((r) => {
+        const ai = aiResults[r.roundIndex];
+        const aiGuess =
+          ai?.status === "success"
+            ? {
+                lat: ai.analysis.aiGuess.lat,
+                lng: ai.analysis.aiGuess.lng,
+                country: ai.analysis.aiGuess.country,
+                confidence: ai.analysis.aiGuess.confidence,
+              }
+            : null;
+        return {
+          roundIndex: r.roundIndex,
+          actual: r.actual,
+          guess: r.guess,
+          aiGuess,
+          distanceKm: r.distanceKm,
+          aiDistanceKm: aiDistanceFor(r.roundIndex),
+          score: r.score,
+          aiScore: aiScoreFor(r.roundIndex),
+          maxScore: MAX_SCORE_PER_ROUND,
+        };
+      }),
       totalScore,
       totalAiScore,
       totalMaxScore: MAX_SCORE_PER_GAME,
@@ -101,9 +116,13 @@ export default function SummaryScreen({ scope, rounds }: SummaryScreenProps) {
                 <td className="px-3 py-2">{r.roundIndex + 1}</td>
                 <td className="px-3 py-2 text-right">{r.score.toLocaleString()}</td>
                 <td className="px-3 py-2 text-right">{r.distanceKm.toFixed(0)} km</td>
-                <td className="px-3 py-2 text-right">{r.aiScore?.toLocaleString() ?? "—"}</td>
                 <td className="px-3 py-2 text-right">
-                  {r.aiDistanceKm != null ? `${r.aiDistanceKm.toFixed(0)} km` : "—"}
+                  {aiScoreFor(r.roundIndex)?.toLocaleString() ?? "—"}
+                </td>
+                <td className="px-3 py-2 text-right">
+                  {aiDistanceFor(r.roundIndex) != null
+                    ? `${aiDistanceFor(r.roundIndex)!.toFixed(0)} km`
+                    : "—"}
                 </td>
               </tr>
             ))}

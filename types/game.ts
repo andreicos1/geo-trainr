@@ -39,6 +39,14 @@ export interface RoundAnalysis {
 export interface RoundLocation {
   actual: LatLng;
   panoId: string;
+  /**
+   * The heading/pitch/zoom the panorama opens at, chosen once per round.
+   * Used both as the Street View panorama's initial view and as the
+   * viewpoint captured for the AI's analysis, so the AI's image request can
+   * fire as soon as the round starts instead of waiting on the player's
+   * final camera position at guess time.
+   */
+  initialPov: { heading: number; pitch: number; zoom: number };
 }
 
 /** Everything known about a single completed round, before persistence shaping. */
@@ -46,15 +54,19 @@ export interface CompletedRound {
   roundIndex: number;
   actual: LatLng;
   guess: LatLng;
-  heading: number;
-  pitch: number;
-  zoom: number;
   distanceKm: number;
   score: number;
-  analysis: RoundAnalysis | null; // null if the AI call failed
-  aiDistanceKm: number | null;
-  aiScore: number | null;
 }
+
+/**
+ * The AI's analysis of a round, tracked independently of `CompletedRound`
+ * since the request is kicked off as soon as the round's location is
+ * ready — well before (often) the player has submitted their own guess.
+ */
+export type AiRoundResult =
+  | { status: "pending" }
+  | { status: "success"; analysis: RoundAnalysis; aiDistanceKm: number; aiScore: number }
+  | { status: "error"; message: string };
 
 export type GamePhase =
   | "loading-location"

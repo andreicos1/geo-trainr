@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ComposableMap, Geographies, Geography, ZoomableGroup } from "react-simple-maps";
-import worldTopoJson from "world-atlas/countries-110m.json";
+import { WORLD_TOPOJSON } from "@/lib/geo/world-map-topology";
 import { hasCoverage } from "@/lib/geo/countries-coverage";
 import { PICKER_COLORS } from "@/lib/theme/picker-colors";
 
@@ -13,7 +13,7 @@ interface WorldMapSelectProps {
 }
 
 const MIN_ZOOM = 1;
-const MAX_ZOOM = 8;
+const MAX_ZOOM = 32;
 
 export default function WorldMapSelect({
   selectedCode,
@@ -22,6 +22,14 @@ export default function WorldMapSelect({
 }: WorldMapSelectProps) {
   const [zoom, setZoom] = useState(1);
   const [center, setCenter] = useState<[number, number]>([0, 0]);
+  const [hovered, setHovered] = useState<{ name: string; x: number; y: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  function updateHoverPosition(evt: React.MouseEvent, name: string) {
+    const bounds = containerRef.current?.getBoundingClientRect();
+    if (!bounds) return;
+    setHovered({ name, x: evt.clientX - bounds.left, y: evt.clientY - bounds.top });
+  }
 
   function zoomIn() {
     setZoom((z) => Math.min(MAX_ZOOM, z * 1.5));
@@ -37,7 +45,10 @@ export default function WorldMapSelect({
   }
 
   return (
-    <div className="relative w-full overflow-hidden rounded-xl border border-white/10 bg-slate-950">
+    <div
+      ref={containerRef}
+      className="relative w-full overflow-hidden rounded-xl border border-white/10 bg-slate-950"
+    >
       <div className="absolute right-3 top-3 z-10 flex flex-col gap-1">
         <button
           type="button"
@@ -79,10 +90,11 @@ export default function WorldMapSelect({
             setZoom(z);
           }}
         >
-          <Geographies geography={worldTopoJson as unknown as Record<string, unknown>}>
+          <Geographies geography={WORLD_TOPOJSON as unknown as Record<string, unknown>}>
             {({ geographies }) =>
               geographies.map((geo) => {
                 const code = String(geo.id);
+                const name = String(geo.properties?.name ?? "Unknown");
                 const available = hasCoverage(code);
                 const isSelected = available && selectedCode === code;
                 const isHighlighted = available && !isSelected && highlightedCodes?.has(code);
@@ -101,8 +113,8 @@ export default function WorldMapSelect({
                     : available
                       ? PICKER_COLORS.availableHover
                       : PICKER_COLORS.unavailable;
-                const stroke = isSelected ? PICKER_COLORS.borderSelected : PICKER_COLORS.borderDefault;
-                const strokeWidth = isSelected ? 1.75 : 0.5;
+                const stroke = PICKER_COLORS.borderDefault;
+                const strokeWidth = 0.5;
 
                 return (
                   <Geography
@@ -111,6 +123,9 @@ export default function WorldMapSelect({
                     onClick={() => {
                       if (available) onSelectCountry(code);
                     }}
+                    onMouseEnter={(evt) => updateHoverPosition(evt, name)}
+                    onMouseMove={(evt) => updateHoverPosition(evt, name)}
+                    onMouseLeave={() => setHovered(null)}
                     style={{
                       default: {
                         fill,
@@ -144,6 +159,15 @@ export default function WorldMapSelect({
           </Geographies>
         </ZoomableGroup>
       </ComposableMap>
+
+      {hovered && (
+        <div
+          className="pointer-events-none absolute z-20 -translate-x-1/2 -translate-y-full rounded-md bg-slate-900/90 px-2 py-1 text-xs font-medium text-white shadow-lg"
+          style={{ left: hovered.x, top: hovered.y - 8 }}
+        >
+          {hovered.name}
+        </div>
+      )}
     </div>
   );
 }

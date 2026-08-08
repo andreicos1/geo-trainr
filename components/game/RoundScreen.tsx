@@ -1,7 +1,7 @@
 "use client";
 
-import { useRef, useState } from "react";
-import StreetViewPanorama, { type StreetViewPov } from "@/components/street-view/StreetViewPanorama";
+import { useState } from "react";
+import StreetViewPanorama from "@/components/street-view/StreetViewPanorama";
 import GuessMap from "@/components/guess-map/GuessMap";
 import type { LatLng } from "@/types/game";
 import { ROUNDS_PER_GAME } from "@/types/game";
@@ -9,41 +9,90 @@ import { ROUNDS_PER_GAME } from "@/types/game";
 interface RoundScreenProps {
   roundIndex: number;
   panoId: string;
-  onSubmit: (guess: LatLng, pov: StreetViewPov) => void;
+  initialPov: { heading: number; pitch: number; zoom: number };
+  onSubmit: (guess: LatLng) => void;
 }
 
-export default function RoundScreen({ roundIndex, panoId, onSubmit }: RoundScreenProps) {
+// Discrete sizes the corner map can be pinned to via the diagonal-arrow
+// resize buttons. Each step is also what hovering bumps up to from the step
+// below, so hovering always previews "one size bigger" before settling back
+// on mouse-out.
+const MAP_SIZE_STEPS = [
+  { w: "w-[25rem]", h: "h-[17.5rem]" },
+  { w: "w-[min(56.25vw,35rem)]", h: "h-[min(50vh,26.25rem)]" },
+  { w: "w-[min(95vw,85rem)]", h: "h-[min(88vh,62.5rem)]" },
+] as const;
+
+export default function RoundScreen({ roundIndex, panoId, initialPov, onSubmit }: RoundScreenProps) {
   const [guess, setGuess] = useState<LatLng | null>(null);
-  const getPovRef = useRef<(() => StreetViewPov) | null>(null);
+  const [sizeStep, setSizeStep] = useState(0);
+  const [hovering, setHovering] = useState(false);
 
   function handleSubmit() {
-    if (!guess || !getPovRef.current) return;
-    onSubmit(guess, getPovRef.current());
+    if (!guess) return;
+    onSubmit(guess);
   }
 
+  const effectiveStep = hovering ? Math.min(sizeStep + 1, MAP_SIZE_STEPS.length - 1) : sizeStep;
+  const size = MAP_SIZE_STEPS[effectiveStep];
+
   return (
-    <div className="flex h-dvh w-full flex-col">
-      <div className="relative flex-1">
-        <StreetViewPanorama
-          panoId={panoId}
-          onPanoramaReady={(getPov) => {
-            getPovRef.current = getPov;
-          }}
-        />
-        <div className="absolute left-4 top-4 rounded-full bg-black/60 px-3 py-1 text-sm font-semibold text-white backdrop-blur">
-          Round {roundIndex + 1} / {ROUNDS_PER_GAME}
-        </div>
+    <div className="relative h-dvh w-full overflow-hidden bg-black">
+      <StreetViewPanorama panoId={panoId} initialPov={initialPov} />
+
+      <div className="absolute left-4 top-4 z-10 rounded-full bg-black/60 px-3 py-1 text-sm font-semibold text-white backdrop-blur">
+        Round {roundIndex + 1} / {ROUNDS_PER_GAME}
       </div>
 
-      <div className="relative h-64 border-t border-white/10 bg-slate-950 sm:h-72">
-        <GuessMap value={guess} onChange={setGuess} />
+      <div
+        onMouseEnter={() => setHovering(true)}
+        onMouseLeave={() => setHovering(false)}
+        className={`absolute bottom-4 right-4 z-20 flex flex-col items-stretch transition-all duration-300 ease-out ${size.w}`}
+      >
+        <div className={`relative overflow-hidden rounded-xl bg-slate-950 shadow-2xl ${size.h}`}>
+          <div className="absolute left-2 top-2 z-10 flex gap-1">
+            <button
+              type="button"
+              onClick={() => setSizeStep((s) => Math.min(MAP_SIZE_STEPS.length - 1, s + 1))}
+              disabled={sizeStep === MAP_SIZE_STEPS.length - 1}
+              aria-label="Enlarge map"
+              title="Enlarge map"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white backdrop-blur transition hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M15 3h6v6" />
+                <path d="M9 21H3v-6" />
+                <path d="M21 3l-7 7" />
+                <path d="M3 21l7-7" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              onClick={() => setSizeStep((s) => Math.max(0, s - 1))}
+              disabled={sizeStep === 0}
+              aria-label="Shrink map"
+              title="Shrink map"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-black/60 text-white backdrop-blur transition hover:bg-black/80 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 14h6v6" />
+                <path d="M20 10h-6V4" />
+                <path d="M14 10l7-7" />
+                <path d="M3 21l7-7" />
+              </svg>
+            </button>
+          </div>
+
+          <GuessMap value={guess} onChange={setGuess} />
+        </div>
+
         <button
           type="button"
           disabled={!guess}
           onClick={handleSubmit}
-          className="absolute bottom-4 right-4 rounded-full bg-emerald-500 px-6 py-2.5 font-semibold text-white shadow-lg transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40"
+          className="mt-3 w-full shrink-0 rounded-full bg-emerald-500 px-8 py-3 text-center font-bold text-white shadow-lg transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:bg-slate-700 disabled:text-slate-400"
         >
-          Submit Guess
+          Guess
         </button>
       </div>
     </div>

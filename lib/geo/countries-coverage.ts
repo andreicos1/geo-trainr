@@ -7,9 +7,15 @@ import type { Continent, GameScope } from "@/types/game";
  * and where the random-location sampler looks for panoramas.
  *
  * `code` is the country's ISO 3166-1 numeric code as a string, matching the
- * `id` field on features in world-atlas's countries-110m.json TopoJSON
+ * `id` field on features in world-atlas's countries-50m.json TopoJSON
  * (e.g. France = "250") — this lets the map component look up coverage
  * directly from a clicked feature's id with no separate mapping table.
+ * The 50m (not 110m) resolution is required for micro-states like Monaco
+ * or Singapore to exist as distinct clickable shapes at all; at 110m they
+ * get absorbed into neighboring landmasses. Kosovo is a known exception:
+ * Natural Earth's admin-0 data includes its shape but with no ISO code
+ * (id is undefined), so it can't be added here without a separate id
+ * lookup — not currently worth the complexity for one country.
  *
  * `bboxes` are rough [south, west, north, east] boxes over land/road
  * network areas with known coverage. They don't need to be precise: the
@@ -61,6 +67,20 @@ export const COUNTRY_COVERAGE: CountryCoverage[] = [
   { code: "807", name: "North Macedonia", continent: "EU", bboxes: [[40.8, 20.4, 42.4, 23.05]] },
   { code: "008", name: "Albania", continent: "EU", bboxes: [[39.6, 19.2, 42.7, 21.1]] },
   { code: "499", name: "Montenegro", continent: "EU", bboxes: [[41.85, 18.4, 43.6, 20.4]] },
+  { code: "498", name: "Moldova", continent: "EU", bboxes: [[46.9, 28.75, 47.1, 28.95]] }, // Chisinau
+  {
+    code: "804",
+    name: "Ukraine",
+    continent: "EU",
+    bboxes: [
+      [50.3, 30.3, 50.6, 30.7], // Kyiv
+      [49.75, 23.9, 49.9, 24.1], // Lviv
+      [46.35, 30.6, 46.55, 30.85], // Odesa
+    ],
+  },
+  { code: "492", name: "Monaco", continent: "EU", bboxes: [[43.72, 7.4, 43.75, 7.44]] },
+  { code: "020", name: "Andorra", continent: "EU", bboxes: [[42.43, 1.41, 42.66, 1.79]] },
+  { code: "674", name: "San Marino", continent: "EU", bboxes: [[43.89, 12.4, 43.99, 12.52]] },
 
   // --- Asia ---
   { code: "392", name: "Japan", continent: "AS", bboxes: [[31, 130, 43.5, 141.5]] },
@@ -80,6 +100,35 @@ export const COUNTRY_COVERAGE: CountryCoverage[] = [
   { code: "144", name: "Sri Lanka", continent: "AS", bboxes: [[6, 79.8, 9.8, 81.9]] },
   { code: "608", name: "Philippines", continent: "AS", bboxes: [[14, 120.5, 18, 122]] }, // Luzon
   { code: "458", name: "Malaysia", continent: "AS", bboxes: [[1.3, 100, 6.5, 103.5]] }, // Peninsular
+  { code: "268", name: "Georgia", continent: "AS", bboxes: [[41, 41, 43.6, 46.7]] },
+  { code: "792", name: "Turkey", continent: "AS", bboxes: [[36, 26, 42.1, 44.8]] },
+  {
+    code: "704",
+    name: "Vietnam",
+    continent: "AS",
+    bboxes: [
+      [20.9, 105.6, 21.15, 105.95], // Hanoi
+      [10.65, 106.55, 10.9, 106.85], // Ho Chi Minh City
+    ],
+  },
+  { code: "050", name: "Bangladesh", continent: "AS", bboxes: [[23.65, 90.3, 23.95, 90.5]] }, // Dhaka
+  {
+    code: "398",
+    name: "Kazakhstan",
+    continent: "AS",
+    bboxes: [
+      [43.15, 76.8, 43.35, 77.1], // Almaty
+      [51.05, 71.35, 51.25, 71.55], // Astana
+    ],
+  },
+  { code: "496", name: "Mongolia", continent: "AS", bboxes: [[47.85, 106.75, 47.95, 106.95]] }, // Ulaanbaatar
+  { code: "064", name: "Bhutan", continent: "AS", bboxes: [[26.7, 88.7, 28.3, 92.1]] }, // Trekker coverage along the main highway
+  { code: "417", name: "Kyrgyzstan", continent: "AS", bboxes: [[42.8, 74.5, 42.95, 74.7]] }, // Bishkek
+  { code: "524", name: "Nepal", continent: "AS", bboxes: [[27.6, 85.2, 27.8, 85.4]] }, // Kathmandu
+  { code: "512", name: "Oman", continent: "AS", bboxes: [[22, 56, 24.7, 59]] },
+  { code: "344", name: "Hong Kong", continent: "AS", bboxes: [[22.15, 113.83, 22.56, 114.41]] },
+  { code: "446", name: "Macao", continent: "AS", bboxes: [[22.1, 113.52, 22.22, 113.6]] },
+  { code: "702", name: "Singapore", continent: "AS", bboxes: [[1.22, 103.6, 1.47, 104.05]] },
   {
     code: "643",
     name: "Russia",

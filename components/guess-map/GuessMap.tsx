@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { loadGoogleMaps } from "@/lib/maps/loader";
+import { makePinIcon, PIN_COLORS, PIN_LABELS } from "@/lib/maps/pin-icon";
 import type { LatLng } from "@/types/game";
 
 const MUTED_MAP_STYLE: google.maps.MapTypeStyle[] = [
@@ -33,6 +34,10 @@ export default function GuessMap({ value, onChange, readOnlyResult, className }:
   const actualMarkerRef = useRef<google.maps.Marker | null>(null);
   const linesRef = useRef<google.maps.Polyline[]>([]);
   const onChangeRef = useRef(onChange);
+  // The map loads asynchronously; this flips once it's ready so the marker
+  // effects below (keyed on props that may already be set at mount time)
+  // re-run instead of silently no-oping against a still-null map.
+  const [mapReady, setMapReady] = useState(false);
 
   useEffect(() => {
     onChangeRef.current = onChange;
@@ -47,7 +52,7 @@ export default function GuessMap({ value, onChange, readOnlyResult, className }:
 
       const map = new google.maps.Map(containerRef.current, {
         center: { lat: 20, lng: 0 },
-        zoom: 2,
+        zoom: 1,
         minZoom: 1,
         streetViewControl: false,
         mapTypeControl: false,
@@ -60,11 +65,32 @@ export default function GuessMap({ value, onChange, readOnlyResult, className }:
         if (!e.latLng) return;
         onChangeRef.current?.({ lat: e.latLng.lat(), lng: e.latLng.lng() });
       });
+
+      setMapReady(true);
     });
 
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // The map panel can resize (e.g. the expandable corner map in RoundScreen).
+  // Google Maps doesn't pick that up on its own, so nudge it to re-tile and
+  // re-center whenever the container's box changes.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const observer = new ResizeObserver(() => {
+      const map = mapRef.current;
+      if (!map) return;
+      const center = map.getCenter();
+      google.maps.event.trigger(map, "resize");
+      if (center) map.setCenter(center);
+    });
+    observer.observe(container);
+
+    return () => observer.disconnect();
   }, []);
 
   // Controlled guess marker (interactive mode).
@@ -79,11 +105,16 @@ export default function GuessMap({ value, onChange, readOnlyResult, className }:
     }
 
     if (!guessMarkerRef.current) {
-      guessMarkerRef.current = new google.maps.Marker({ map, position: value, title: "Your guess" });
+      guessMarkerRef.current = new google.maps.Marker({
+        map,
+        position: value,
+        title: PIN_LABELS.guess,
+        icon: makePinIcon("guess"),
+      });
     } else {
       guessMarkerRef.current.setPosition(value);
     }
-  }, [value, readOnlyResult]);
+  }, [value, readOnlyResult, mapReady]);
 
   // Read-only feedback mode: three markers + connecting lines.
   useEffect(() => {
@@ -106,33 +137,36 @@ export default function GuessMap({ value, onChange, readOnlyResult, className }:
     const { guess, aiGuess, actual } = readOnlyResult;
     const bounds = new google.maps.LatLngBounds();
 
-    const userMarker = new google.maps.Marker({
-      map,
-      position: guess,
-      title: "Your guess",
-      label: { text: "Y", color: "#ffffff", fontWeight: "bold" },
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: "#38bdf8", fillOpacity: 1, strokeColor: "#0f172a", strokeWeight: 2 },
-    });
-    guessMarkerRef.current = userMarker;
-    bounds.extend(guess);
-
+    // Draw the actual-location pin first so guess/AI pins land on top when
+    // they land close together.
     const actualMarker = new google.maps.Marker({
       map,
       position: actual,
-      title: "Actual location",
-      label: { text: "A", color: "#ffffff", fontWeight: "bold" },
-      icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: "#22c55e", fillOpacity: 1, strokeColor: "#0f172a", strokeWeight: 2 },
+      title: PIN_LABELS.actual,
+      icon: makePinIcon("actual"),
+      zIndex: 10,
     });
     actualMarkerRef.current = actualMarker;
     bounds.extend(actual);
+
+    const userMarker = new google.maps.Marker({
+      map,
+      position: guess,
+      title: PIN_LABELS.guess,
+      icon: makePinIcon("guess"),
+      zIndex: 20,
+    });
+    guessMarkerRef.current = userMarker;
+    bounds.extend(guess);
 
     linesRef.current.push(
       new google.maps.Polyline({
         map,
         path: [guess, actual],
-        strokeColor: "#38bdf8",
-        strokeOpacity: 0.8,
-        strokeWeight: 2,
+        strokeColor: PIN_COLORS.guess,
+        strokeOpacity: 0.9,
+        strokeWeight: 3,
+        icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3 }, offset: "0", repeat: "12px" }],
       }),
     );
 
@@ -140,9 +174,9 @@ export default function GuessMap({ value, onChange, readOnlyResult, className }:
       const ai = new google.maps.Marker({
         map,
         position: aiGuess,
-        title: "AI guess",
-        label: { text: "AI", color: "#ffffff", fontWeight: "bold" },
-        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 8, fillColor: "#f97316", fillOpacity: 1, strokeColor: "#0f172a", strokeWeight: 2 },
+        title: PIN_LABELS.ai,
+        icon: makePinIcon("ai"),
+        zIndex: 20,
       });
       aiMarkerRef.current = ai;
       bounds.extend(aiGuess);
@@ -150,15 +184,16 @@ export default function GuessMap({ value, onChange, readOnlyResult, className }:
         new google.maps.Polyline({
           map,
           path: [aiGuess, actual],
-          strokeColor: "#f97316",
-          strokeOpacity: 0.8,
-          strokeWeight: 2,
+          strokeColor: PIN_COLORS.ai,
+          strokeOpacity: 0.9,
+          strokeWeight: 3,
+          icons: [{ icon: { path: "M 0,-1 0,1", strokeOpacity: 1, scale: 3 }, offset: "0", repeat: "12px" }],
         }),
       );
     }
 
-    map.fitBounds(bounds, 48);
-  }, [readOnlyResult]);
+    map.fitBounds(bounds, 64);
+  }, [readOnlyResult, mapReady]);
 
   return <div ref={containerRef} className={className ?? "h-full w-full"} />;
 }

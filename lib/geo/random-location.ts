@@ -81,6 +81,7 @@ async function tryOneCountry(
         return {
           actual: { lat: location.latLng.lat(), lng: location.latLng.lng() },
           panoId: location.pano,
+          initialPov: { heading: Math.random() * 360, pitch: 0, zoom: 0 },
         };
       }
     } catch {

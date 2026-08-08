@@ -6,8 +6,8 @@ import FeedbackScreen from "./FeedbackScreen";
 import SummaryScreen from "./SummaryScreen";
 import { findRandomLocation } from "@/lib/geo/random-location";
 import { haversineDistanceKm, scaleForScope, scoreFromDistance } from "@/lib/geo/scoring";
-import type { StreetViewPov } from "@/components/street-view/StreetViewPanorama";
 import type {
+  AiRoundResult,
   CompletedRound,
   GamePhase,
   GameScope,
@@ -26,8 +26,7 @@ interface GameState {
   roundIndex: number;
   currentLocation: RoundLocation | null;
   rounds: CompletedRound[];
-  analyzing: boolean;
-  analysisError: string | null;
+  aiResults: Record<number, AiRoundResult>;
   locationError: string | null;
 }
 
@@ -36,14 +35,15 @@ type Action =
   | { type: "LOCATION_READY"; location: RoundLocation }
   | { type: "LOCATION_ERROR"; message: string }
   | { type: "SUBMIT_GUESS"; round: CompletedRound }
+  | { type: "AI_PENDING"; roundIndex: number }
   | {
-      type: "ANALYSIS_SUCCESS";
+      type: "AI_SUCCESS";
       roundIndex: number;
       analysis: RoundAnalysis;
       aiDistanceKm: number;
       aiScore: number;
     }
-  | { type: "ANALYSIS_ERROR"; roundIndex: number; message: string }
+  | { type: "AI_ERROR"; roundIndex: number; message: string }
   | { type: "NEXT_ROUND" };
 
 const initialState: GameState = {
@@ -51,8 +51,7 @@ const initialState: GameState = {
   roundIndex: 0,
   currentLocation: null,
   rounds: [],
-  analyzing: false,
-  analysisError: null,
+  aiResults: {},
   locationError: null,
 };
 
@@ -65,30 +64,33 @@ function reducer(state: GameState, action: Action): GameState {
     case "LOCATION_ERROR":
       return { ...state, phase: "location-error", locationError: action.message };
     case "SUBMIT_GUESS":
+      return { ...state, phase: "feedback", rounds: [...state.rounds, action.round] };
+    case "AI_PENDING":
       return {
         ...state,
-        phase: "feedback",
-        rounds: [...state.rounds, action.round],
-        analyzing: true,
-        analysisError: null,
+        aiResults: { ...state.aiResults, [action.roundIndex]: { status: "pending" } },
       };
-    case "ANALYSIS_SUCCESS":
+    case "AI_SUCCESS":
       return {
         ...state,
-        analyzing: false,
-        rounds: state.rounds.map((r) =>
-          r.roundIndex === action.roundIndex
-            ? {
-                ...r,
-                analysis: action.analysis,
-                aiDistanceKm: action.aiDistanceKm,
-                aiScore: action.aiScore,
-              }
-            : r,
-        ),
+        aiResults: {
+          ...state.aiResults,
+          [action.roundIndex]: {
+            status: "success",
+            analysis: action.analysis,
+            aiDistanceKm: action.aiDistanceKm,
+            aiScore: action.aiScore,
+          },
+        },
       };
-    case "ANALYSIS_ERROR":
-      return { ...state, analyzing: false, analysisError: action.message };
+    case "AI_ERROR":
+      return {
+        ...state,
+        aiResults: {
+          ...state.aiResults,
+          [action.roundIndex]: { status: "error", message: action.message },
+        },
+      };
     case "NEXT_ROUND": {
       const nextIndex = state.roundIndex + 1;
       if (nextIndex >= ROUNDS_PER_GAME) {
@@ -106,51 +108,14 @@ export default function GameSession({ initialScope }: GameSessionProps) {
   const [retryToken, setRetryToken] = useState(0);
   const scale = useMemo(() => scaleForScope(initialScope), [initialScope]);
 
-  // Find a random Street View location whenever a new round starts.
-  useEffect(() => {
-    let cancelled = false;
-    dispatch({ type: "LOCATION_LOADING" });
-
-    findRandomLocation(initialScope)
-      .then((location) => {
-        if (!cancelled) dispatch({ type: "LOCATION_READY", location });
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          dispatch({
-            type: "LOCATION_ERROR",
-            message: err instanceof Error ? err.message : "Failed to find a location.",
-          });
-        }
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [state.roundIndex, retryToken, initialScope]);
-
-  function handleSubmit(guess: LatLng, pov: StreetViewPov) {
-    const location = state.currentLocation;
-    if (!location) return;
-
-    const distanceKm = haversineDistanceKm(guess, location.actual);
-    const score = scoreFromDistance(distanceKm, scale);
-    const roundIndex = state.roundIndex;
-
-    const round: CompletedRound = {
-      roundIndex,
-      actual: location.actual,
-      guess,
-      heading: pov.heading,
-      pitch: pov.pitch,
-      zoom: pov.zoom,
-      distanceKm,
-      score,
-      analysis: null,
-      aiDistanceKm: null,
-      aiScore: null,
-    };
-    dispatch({ type: "SUBMIT_GUESS", round });
+  // Find a random Street View location whenever a new round starts, and —
+  // as soon as it's found — kick off the AI's analysis in the background.
+  // The AI's image is captured at the round's fixed initial POV rather than
+  // wherever the player ends up looking, so this doesn't have to wait for
+  // (or care about) the player's guess at all: by the time they submit,
+  // the analysis is often already done.
+  function runAnalysis(roundIndex: number, location: RoundLocation) {
+    dispatch({ type: "AI_PENDING", roundIndex });
 
     fetch("/api/analyze-round", {
       method: "POST",
@@ -158,9 +123,9 @@ export default function GameSession({ initialScope }: GameSessionProps) {
       body: JSON.stringify({
         actualLat: location.actual.lat,
         actualLng: location.actual.lng,
-        heading: pov.heading,
-        pitch: pov.pitch,
-        zoom: pov.zoom,
+        heading: location.initialPov.heading,
+        pitch: location.initialPov.pitch,
+        zoom: location.initialPov.zoom,
         panoId: location.panoId,
       }),
     })
@@ -177,15 +142,59 @@ export default function GameSession({ initialScope }: GameSessionProps) {
           location.actual,
         );
         const aiScore = scoreFromDistance(aiDistanceKm, scale);
-        dispatch({ type: "ANALYSIS_SUCCESS", roundIndex, analysis, aiDistanceKm, aiScore });
+        dispatch({ type: "AI_SUCCESS", roundIndex, analysis, aiDistanceKm, aiScore });
       })
       .catch((err: unknown) => {
         dispatch({
-          type: "ANALYSIS_ERROR",
+          type: "AI_ERROR",
           roundIndex,
           message: err instanceof Error ? err.message : "AI analysis failed.",
         });
       });
+  }
+
+  useEffect(() => {
+    let cancelled = false;
+    dispatch({ type: "LOCATION_LOADING" });
+
+    const roundIndex = state.roundIndex;
+
+    findRandomLocation(initialScope)
+      .then((location) => {
+        if (cancelled) return;
+        dispatch({ type: "LOCATION_READY", location });
+        runAnalysis(roundIndex, location);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          dispatch({
+            type: "LOCATION_ERROR",
+            message: err instanceof Error ? err.message : "Failed to find a location.",
+          });
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.roundIndex, retryToken, initialScope]);
+
+  function handleSubmit(guess: LatLng) {
+    const location = state.currentLocation;
+    if (!location) return;
+
+    const distanceKm = haversineDistanceKm(guess, location.actual);
+    const score = scoreFromDistance(distanceKm, scale);
+
+    const round: CompletedRound = {
+      roundIndex: state.roundIndex,
+      actual: location.actual,
+      guess,
+      distanceKm,
+      score,
+    };
+    dispatch({ type: "SUBMIT_GUESS", round });
   }
 
   function handleNext() {
@@ -221,6 +230,7 @@ export default function GameSession({ initialScope }: GameSessionProps) {
       <RoundScreen
         roundIndex={state.roundIndex}
         panoId={state.currentLocation.panoId}
+        initialPov={state.currentLocation.initialPov}
         onSubmit={handleSubmit}
       />
     );
@@ -229,18 +239,12 @@ export default function GameSession({ initialScope }: GameSessionProps) {
   if (state.phase === "feedback") {
     const round = state.rounds[state.roundIndex];
     if (!round) return null;
-    return (
-      <FeedbackScreen
-        round={round}
-        analyzing={state.analyzing}
-        analysisError={state.analysisError}
-        onNext={handleNext}
-      />
-    );
+    const aiResult: AiRoundResult = state.aiResults[round.roundIndex] ?? { status: "pending" };
+    return <FeedbackScreen round={round} aiResult={aiResult} onNext={handleNext} />;
   }
 
   if (state.phase === "summary") {
-    return <SummaryScreen scope={initialScope} rounds={state.rounds} />;
+    return <SummaryScreen scope={initialScope} rounds={state.rounds} aiResults={state.aiResults} />;
   }
 
   return null;

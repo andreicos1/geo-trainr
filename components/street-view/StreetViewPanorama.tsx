@@ -3,17 +3,11 @@
 import { useEffect, useRef, useState } from "react";
 import { loadStreetView } from "@/lib/maps/loader";
 
-export interface StreetViewPov {
-  heading: number;
-  pitch: number;
-  zoom: number;
-}
-
 interface StreetViewPanoramaProps {
   panoId: string;
+  /** Initial heading/pitch/zoom, chosen once per round by the caller. */
+  initialPov: { heading: number; pitch: number; zoom: number };
   onReady?: () => void;
-  /** Exposes a snapshot function the parent can call at "submit" time. */
-  onPanoramaReady?: (getPov: () => StreetViewPov) => void;
 }
 
 /**
@@ -23,8 +17,8 @@ interface StreetViewPanoramaProps {
  */
 export default function StreetViewPanorama({
   panoId,
+  initialPov,
   onReady,
-  onPanoramaReady,
 }: StreetViewPanoramaProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const panoramaRef = useRef<google.maps.StreetViewPanorama | null>(null);
@@ -39,8 +33,8 @@ export default function StreetViewPanorama({
 
         const panorama = new google.maps.StreetViewPanorama(containerRef.current, {
           pano: panoId,
-          pov: { heading: Math.random() * 360, pitch: 0 },
-          zoom: 0,
+          pov: { heading: initialPov.heading, pitch: initialPov.pitch },
+          zoom: initialPov.zoom,
           addressControl: false,
           linksControl: false,
           clickToGo: false,
@@ -54,12 +48,6 @@ export default function StreetViewPanorama({
         });
 
         panoramaRef.current = panorama;
-
-        onPanoramaReady?.(() => {
-          const pov = panorama.getPov();
-          return { heading: pov.heading, pitch: pov.pitch, zoom: panorama.getZoom() };
-        });
-
         onReady?.();
       })
       .catch((err: unknown) => {

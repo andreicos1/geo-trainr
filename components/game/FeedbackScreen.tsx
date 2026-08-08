@@ -3,19 +3,18 @@
 import ScoreBadge from "./ScoreBadge";
 import ClueOverlay from "./ClueOverlay";
 import GuessMap from "@/components/guess-map/GuessMap";
-import type { CompletedRound } from "@/types/game";
+import type { AiRoundResult, CompletedRound } from "@/types/game";
 import { MAX_SCORE_PER_ROUND, ROUNDS_PER_GAME } from "@/types/game";
 
 interface FeedbackScreenProps {
   round: CompletedRound;
-  analyzing: boolean;
-  analysisError: string | null;
+  aiResult: AiRoundResult;
   onNext: () => void;
 }
 
-export default function FeedbackScreen({ round, analyzing, analysisError, onNext }: FeedbackScreenProps) {
+export default function FeedbackScreen({ round, aiResult, onNext }: FeedbackScreenProps) {
   const isLastRound = round.roundIndex === ROUNDS_PER_GAME - 1;
-  const analysis = round.analysis;
+  const analysis = aiResult.status === "success" ? aiResult.analysis : null;
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-8">
@@ -46,20 +45,22 @@ export default function FeedbackScreen({ round, analyzing, analysisError, onNext
         <ScoreBadge
           label="AI Score"
           value={
-            round.aiScore != null
-              ? `${round.aiScore.toLocaleString()} / ${MAX_SCORE_PER_ROUND.toLocaleString()}`
+            aiResult.status === "success"
+              ? `${aiResult.aiScore.toLocaleString()} / ${MAX_SCORE_PER_ROUND.toLocaleString()}`
               : "—"
           }
           accentClassName="text-orange-400"
         />
         <ScoreBadge
           label="AI Distance"
-          value={round.aiDistanceKm != null ? `${round.aiDistanceKm.toFixed(0)} km` : "—"}
+          value={aiResult.status === "success" ? `${aiResult.aiDistanceKm.toFixed(0)} km` : "—"}
           accentClassName="text-orange-400"
         />
       </div>
 
-      <div className="h-72 overflow-hidden rounded-xl border border-white/10">
+      {/* Pins are shape-coded (pin / flag / spark badge) and their titles
+          surface as native hover tooltips, so no separate color legend. */}
+      <div className="relative h-96 overflow-hidden rounded-xl border border-white/10 sm:h-112">
         <GuessMap
           className="h-full w-full"
           readOnlyResult={{
@@ -75,20 +76,20 @@ export default function FeedbackScreen({ round, analyzing, analysisError, onNext
           AI Analysis
         </h3>
 
-        {analyzing && (
+        {aiResult.status === "pending" && (
           <div className="flex items-center gap-3 rounded-lg border border-white/10 bg-white/5 px-4 py-6 text-slate-300">
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-slate-500 border-t-sky-400" />
             Analyzing the Street View image for clues...
           </div>
         )}
 
-        {!analyzing && analysisError && (
+        {aiResult.status === "error" && (
           <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-4 text-sm text-red-300">
-            AI analysis unavailable: {analysisError}
+            AI analysis unavailable: {aiResult.message}
           </div>
         )}
 
-        {!analyzing && analysis && (
+        {analysis && (
           <div className="flex flex-col gap-4">
             <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
               <span className="font-semibold text-orange-400">
