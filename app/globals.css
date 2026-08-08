@@ -1,8 +1,16 @@
 @import "tailwindcss";
 
+/*
+ * This app is styled dark-first throughout (text-white, text-slate-400,
+ * bg-white/10, etc. assume a dark surface underneath). It has no light
+ * variant, so the background is fixed here instead of following
+ * prefers-color-scheme - letting it flip to white in light-OS browsers
+ * silently breaks contrast on nearly every screen.
+ */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #020617;
+  --foreground: #f1f5f9;
+  color-scheme: dark;
 }
 
 @theme inline {
@@ -10,13 +18,6 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
 }
 
 body {
