@@ -416,6 +416,25 @@ export function hasCoverage(code: string): boolean {
   return coverageByCode.has(code);
 }
 
+/**
+ * Finds which covered country's sampling boxes a point falls inside, used
+ * to tell the AI's post-mortem step the real answer's country name without
+ * a separate reverse-geocoding call. Checks `bboxes` first (where a round's
+ * point always lands, since that's what `random-location.ts` samples from
+ * and Street View snaps to nearby imagery), then falls back to
+ * `extentBbox` for the rare snap that lands just outside a coverage
+ * cluster but still within the country's real borders.
+ */
+export function findCountryByPoint(lat: number, lng: number): CountryCoverage | undefined {
+  const inBox = ([south, west, north, east]: [number, number, number, number]) =>
+    lat >= south && lat <= north && lng >= west && lng <= east;
+
+  return (
+    COUNTRY_COVERAGE.find((c) => c.bboxes.some(inBox)) ??
+    COUNTRY_COVERAGE.find((c) => c.extentBbox && inBox(c.extentBbox))
+  );
+}
+
 export function describeScope(scope: GameScope): string {
   if (scope.type === "globe") return "Whole World";
   if (scope.type === "continent") {

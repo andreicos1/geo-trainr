@@ -1,5 +1,5 @@
 import Link from "next/link";
-import GameSession from "@/components/game/GameSession";
+import GameSession from "@/components/game/GameSessionLoader";
 import { hasCoverage } from "@/lib/geo/countries-coverage";
 import type { Continent, GameScope } from "@/types/game";
 

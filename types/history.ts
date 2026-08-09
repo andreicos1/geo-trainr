@@ -3,7 +3,7 @@ import type { GameScope, LatLng } from "./game";
 
 const latLngSchema = z.object({ lat: z.number(), lng: z.number() });
 
-const gameScopeSchema = z.union([
+export const gameScopeSchema = z.union([
   z.object({ type: z.literal("country"), code: z.string() }),
   z.object({
     type: z.literal("continent"),

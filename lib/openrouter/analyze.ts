@@ -1,17 +1,19 @@
 import "server-only";
 import { zodFunction } from "openai/helpers/zod";
 import { getOpenRouterClient, OPENROUTER_MODEL } from "./client";
-import { RoundAnalysisSchema } from "./schema";
+import { PostMortemSchema, RoundAnalysisSchema } from "./schema";
 import {
   COUNTRY_COVERAGE,
   CONTINENTS,
   getCountry,
   getCountriesForContinent,
+  findCountryByPoint,
 } from "@/lib/geo/countries-coverage";
-import type { AiGuess, Clue, GameScope, RoundAnalysis } from "@/types/game";
+import type { AiGuess, Clue, GameScope, PostMortem, RoundAnalysis } from "@/types/game";
 
 const IMAGE_SIZE = 640;
 const TOOL_NAME = "submit_round_analysis";
+const POST_MORTEM_TOOL_NAME = "submit_post_mortem";
 
 interface FetchImageArgs {
   lat: number;
@@ -112,10 +114,101 @@ const analysisTool = zodFunction({
   parameters: RoundAnalysisSchema,
 });
 
+const postMortemTool = zodFunction({
+  name: POST_MORTEM_TOOL_NAME,
+  description: "Submit a self-critique comparing the earlier guess against the real location.",
+  parameters: PostMortemSchema,
+});
+
+/**
+ * Builds the follow-up prompt for the second call: it restates the model's
+ * own first-call output as plain text (rather than replaying the raw
+ * tool-call/tool-response messages) since that's simpler to assemble
+ * correctly and reads just as well to the model.
+ */
+function buildPostMortemPrompt(params: {
+  clues: Clue[];
+  aiGuess: AiGuess;
+  actualLat: number;
+  actualLng: number;
+  actualCountry?: string;
+}): string {
+  const { clues, aiGuess, actualLat, actualLng, actualCountry } = params;
+  const cluesText = clues
+    .map(
+      (c, i) =>
+        `${i + 1}. ${c.label} — ${c.explanation}${c.suggests ? ` (suggested: ${c.suggests})` : ""}`,
+    )
+    .join("\n");
+
+  return `Here is the analysis you just gave for this Street View image:
+
+Clues you identified:
+${cluesText}
+
+Your guess: ${aiGuess.country} (${aiGuess.lat.toFixed(4)}, ${aiGuess.lng.toFixed(4)}), confidence ${aiGuess.confidence}.
+Your reasoning: ${aiGuess.reasoningSummary}
+
+The real location has now been revealed${actualCountry ? `: it's in ${actualCountry}` : ""}, at latitude ${actualLat.toFixed(4)}, longitude ${actualLng.toFixed(4)}.
+
+Look at the image again with this answer in mind. Be honest and specific: did any of the clues you named point the wrong way or get a detail wrong, and did your final guess land correctly, close, or clearly wrong? Only flag mistakes that actually matter — don't invent nitpicks to fill the list. Call the ${POST_MORTEM_TOOL_NAME} tool exactly once with your verdict.`;
+}
+
+/**
+ * Second, follow-up model call made after the real location is known,
+ * asking the model to critique its own first-call guess. Best-effort: a
+ * failure here shouldn't take down a round whose original guess/clues
+ * already came back fine, so errors are swallowed and logged instead of
+ * thrown.
+ */
+async function getPostMortem(params: {
+  client: ReturnType<typeof getOpenRouterClient>;
+  image: { dataUrl: string };
+  clues: Clue[];
+  aiGuess: AiGuess;
+  actualLat: number;
+  actualLng: number;
+}): Promise<PostMortem | undefined> {
+  const { client, image, clues, aiGuess, actualLat, actualLng } = params;
+  const actualCountry = findCountryByPoint(actualLat, actualLng)?.name;
+
+  try {
+    const completion = await client.chat.completions.parse({
+      model: OPENROUTER_MODEL,
+      max_tokens: 1500,
+      tools: [postMortemTool],
+      tool_choice: { type: "function", function: { name: POST_MORTEM_TOOL_NAME } },
+      messages: [
+        {
+          role: "user",
+          content: [
+            { type: "image_url", image_url: { url: image.dataUrl } },
+            {
+              type: "text",
+              text: buildPostMortemPrompt({ clues, aiGuess, actualLat, actualLng, actualCountry }),
+            },
+          ],
+        },
+      ],
+    });
+
+    const toolCall = completion.choices[0]?.message.tool_calls?.[0];
+    const parsed = toolCall?.function.parsed_arguments as
+      | ReturnType<typeof PostMortemSchema.parse>
+      | undefined;
+
+    return parsed;
+  } catch (err) {
+    console.error("post-mortem analysis failed:", err);
+    return undefined;
+  }
+}
+
 export async function analyzeRound(
   args: FetchImageArgs & { scope: GameScope },
 ): Promise<RoundAnalysis> {
   const { scope, ...imageArgs } = args;
+  const { lat: actualLat, lng: actualLng } = imageArgs;
   const image = await fetchStreetViewImage(imageArgs);
 
   const client = getOpenRouterClient();
@@ -165,5 +258,14 @@ export async function analyzeRound(
     reasoningSummary: parsed.guess.reasoningSummary,
   };
 
-  return { image, clues, aiGuess };
+  const postMortem = await getPostMortem({
+    client,
+    image,
+    clues,
+    aiGuess,
+    actualLat,
+    actualLng,
+  });
+
+  return { image, clues, aiGuess, postMortem };
 }

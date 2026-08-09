@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import RoundScreen from "./RoundScreen";
 import FeedbackScreen from "./FeedbackScreen";
 import SummaryScreen from "./SummaryScreen";
 import { findRandomLocation } from "@/lib/geo/random-location";
 import { haversineDistanceKm, mapDiagonalKm, scoreFromDistance } from "@/lib/geo/scoring";
+import { clearActiveGame, getActiveGame, saveActiveGame, scopesEqual } from "@/lib/storage/active-game";
 import type {
   AiRoundResult,
   CompletedRound,
@@ -103,10 +104,47 @@ function reducer(state: GameState, action: Action): GameState {
   }
 }
 
+/**
+ * The reducer's initial state — resumed from a matching game abandoned via
+ * the X button, a tab close, or a refresh, when one exists (see
+ * lib/storage/active-game.ts), otherwise the normal blank starting point.
+ * Only ever called once, by `useReducer`'s lazy-init form, so a resume never
+ * shows an intermediary "continue?" screen: by the time the player is
+ * looking at a round, that round already *is* the resumed one.
+ */
+function computeInitialState(scope: GameScope): GameState {
+  if (typeof window !== "undefined") {
+    const active = getActiveGame();
+    if (active && scopesEqual(active.scope, scope)) {
+      return {
+        phase: active.phase,
+        roundIndex: active.roundIndex,
+        currentLocation: active.currentLocation,
+        rounds: active.rounds,
+        aiResults: active.aiResults as unknown as Record<number, AiRoundResult>,
+        locationError: active.locationError,
+      };
+    }
+  }
+  return initialState;
+}
+
 export default function GameSession({ initialScope }: GameSessionProps) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(reducer, initialScope, computeInitialState);
   const [retryToken, setRetryToken] = useState(0);
   const diagonalKm = useMemo(() => mapDiagonalKm(initialScope), [initialScope]);
+
+  // If the reducer's initial state above came from a resumed game already
+  // mid-round, this holds that round's index — read once, straight off the
+  // very first render's state — so the fetch effect below knows to keep the
+  // resumed location instead of rolling a new random one. (Server-rendered
+  // HTML has no localStorage, so this is always null there; the client's
+  // first render can disagree when a matching abandoned game exists, which
+  // React reconciles by taking the client value — the one case that matters
+  // here.)
+  const skipFetchRoundRef = useRef<number | null>(
+    state.phase === "playing" || state.phase === "feedback" ? state.roundIndex : null,
+  );
 
   // Find a random Street View location whenever a new round starts, and —
   // as soon as it's found — kick off the AI's analysis in the background.
@@ -154,7 +192,44 @@ export default function GameSession({ initialScope }: GameSessionProps) {
       });
   }
 
+  // Runs once on mount: if the reducer's initial state resumed a round whose
+  // AI analysis was still "pending", that request died with the previous
+  // page and would otherwise never resolve — re-fire it. Reads `state` from
+  // the closure rather than a dependency, since it only ever needs the
+  // resumed snapshot from the very first render, before anything else has
+  // had a chance to change it.
   useEffect(() => {
+    if (skipFetchRoundRef.current === null) return;
+    const ai = state.aiResults[state.roundIndex];
+    if (state.currentLocation && (!ai || ai.status === "pending")) {
+      runAnalysis(state.roundIndex, state.currentLocation);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep the persisted game in sync with every state change so the X
+  // button, a tab close, or a refresh never loses progress. Cleared once
+  // the game reaches its summary, since it's saved to permanent history at
+  // that point (see SummaryScreen) and there's nothing left to resume.
+  useEffect(() => {
+    if (state.phase === "summary") {
+      clearActiveGame();
+      return;
+    }
+    saveActiveGame({
+      scope: initialScope,
+      phase: state.phase as "loading-location" | "playing" | "feedback" | "location-error",
+      roundIndex: state.roundIndex,
+      currentLocation: state.currentLocation,
+      rounds: state.rounds,
+      aiResults: state.aiResults as unknown as Record<string, AiRoundResult>,
+      locationError: state.locationError,
+    });
+  }, [state, initialScope]);
+
+  useEffect(() => {
+    if (skipFetchRoundRef.current === state.roundIndex) return;
+
     let cancelled = false;
     dispatch({ type: "LOCATION_LOADING" });
 

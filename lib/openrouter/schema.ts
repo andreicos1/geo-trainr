@@ -44,3 +44,37 @@ export const RoundAnalysisSchema = z.object({
 });
 
 export type RoundAnalysisParsed = z.infer<typeof RoundAnalysisSchema>;
+
+export const PostMortemSchema = z.object({
+  verdict: z
+    .enum(["correct", "close", "wrong"])
+    .describe(
+      "'correct' if the guessed country matches the real one, 'close' if it's wrong but neighboring/plausible given the clues, 'wrong' if it's a clear miss.",
+    ),
+  summary: z
+    .string()
+    .describe(
+      "2-4 sentence reflection on the guess now that the real location is known: what held up and what didn't.",
+    ),
+  mistakes: z
+    .array(
+      z.object({
+        clueLabel: z
+          .string()
+          .describe(
+            "The label of the clue that was wrong or misleading, copied exactly from the original clue list, or 'Overall guess' if the mistake wasn't tied to one specific clue.",
+          ),
+        whatWasWrong: z
+          .string()
+          .describe("What that clue or the final guess got wrong, stated concretely."),
+        actually: z
+          .string()
+          .describe("What's actually true about the real location that contradicts it."),
+      }),
+    )
+    .describe(
+      "Specific, important things the analysis got wrong, ranked most important first. Empty array if nothing significant was wrong — don't invent minor nitpicks just to fill this in.",
+    ),
+});
+
+export type PostMortemParsed = z.infer<typeof PostMortemSchema>;

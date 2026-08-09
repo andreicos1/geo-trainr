@@ -4,11 +4,14 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import WorldMapSelect from "@/components/world-map/WorldMapSelect";
 import ContinentPicker from "@/components/world-map/ContinentPicker";
+import UnfinishedGameBannerLoader from "./UnfinishedGameBannerLoader";
 import {
   COUNTRY_COVERAGE,
   getCountriesForContinent,
 } from "@/lib/geo/countries-coverage";
+import { scopeToParams } from "@/lib/geo/scope-params";
 import { saveSettings } from "@/lib/storage/game-history";
+import { clearActiveGame } from "@/lib/storage/active-game";
 import type { Continent, GameScope } from "@/types/game";
 
 export default function StartScreen() {
@@ -28,13 +31,12 @@ export default function StartScreen() {
   }
 
   function startGame() {
+    // A fresh "Start Game" click always means a fresh game — even if it
+    // happens to land on the same scope as an unfinished one, which would
+    // otherwise get silently auto-resumed instead (see GameSession).
+    clearActiveGame();
     saveSettings({ lastScope: scope });
-
-    const params = new URLSearchParams({ scope: scope.type });
-    if (scope.type === "country" || scope.type === "continent") {
-      params.set("code", scope.code);
-    }
-    router.push(`/play?${params.toString()}`);
+    router.push(`/play?${scopeToParams(scope).toString()}`);
   }
 
   const selectedCountryCode = scope.type === "country" ? scope.code : undefined;
@@ -65,6 +67,8 @@ export default function StartScreen() {
           Street View guessing against an AI that explains its reasoning.
         </p>
       </header>
+
+      <UnfinishedGameBannerLoader />
 
       <section className="flex flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-3">

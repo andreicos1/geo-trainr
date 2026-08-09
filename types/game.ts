@@ -29,10 +29,30 @@ export interface AiGuess {
   reasoningSummary: string;
 }
 
+export interface PostMortemMistake {
+  clueLabel: string;
+  whatWasWrong: string;
+  actually: string;
+}
+
+/**
+ * The AI's self-critique from a second, follow-up call made after its
+ * original blind guess — given the real location, does it think it got
+ * anything important wrong? Optional because it's a best-effort add-on: if
+ * this step fails, the round still has a perfectly usable guess/clue
+ * breakdown from the first call.
+ */
+export interface PostMortem {
+  verdict: "correct" | "close" | "wrong";
+  summary: string;
+  mistakes: PostMortemMistake[];
+}
+
 export interface RoundAnalysis {
   image: { dataUrl: string; width: number; height: number };
   clues: Clue[];
   aiGuess: AiGuess;
+  postMortem?: PostMortem;
 }
 
 /** A location for one round, resolved from the random-location search. */
