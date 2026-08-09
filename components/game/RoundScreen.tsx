@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import StreetViewPanorama from "@/components/street-view/StreetViewPanorama";
 import GuessMap from "@/components/guess-map/GuessMap";
 import type { LatLng } from "@/types/game";
@@ -43,6 +44,18 @@ export default function RoundScreen({ roundIndex, panoId, initialPov, onSubmit }
       <div className="absolute left-4 top-4 z-10 rounded-full bg-black/60 px-3 py-1 text-sm font-semibold text-white backdrop-blur">
         Round {roundIndex + 1} / {ROUNDS_PER_GAME}
       </div>
+
+      <Link
+        href="/"
+        aria-label="Exit to main menu"
+        title="Exit to main menu"
+        className="absolute right-4 top-4 z-10 flex h-8 w-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur transition hover:bg-black/80"
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M18 6L6 18" />
+          <path d="M6 6l12 12" />
+        </svg>
+      </Link>
 
       <div
         onMouseEnter={() => setHovering(true)}

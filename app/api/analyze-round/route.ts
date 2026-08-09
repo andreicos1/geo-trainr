@@ -3,6 +3,12 @@ import { analyzeRound } from "@/lib/openrouter/analyze";
 
 export const maxDuration = 60;
 
+const gameScopeSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("country"), code: z.string() }),
+  z.object({ type: z.literal("continent"), code: z.enum(["EU", "AS", "AF", "NA", "SA", "OC"]) }),
+  z.object({ type: z.literal("globe") }),
+]);
+
 const requestSchema = z.object({
   actualLat: z.number(),
   actualLng: z.number(),
@@ -10,6 +16,7 @@ const requestSchema = z.object({
   pitch: z.number(),
   zoom: z.number(),
   panoId: z.string().optional(),
+  scope: gameScopeSchema,
 });
 
 export async function POST(request: Request) {
@@ -28,7 +35,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { actualLat, actualLng, heading, pitch, zoom } = parsed.data;
+  const { actualLat, actualLng, heading, pitch, zoom, scope } = parsed.data;
 
   try {
     const analysis = await analyzeRound({
@@ -37,6 +44,7 @@ export async function POST(request: Request) {
       heading,
       pitch,
       zoom,
+      scope,
     });
     return Response.json(analysis);
   } catch (err) {

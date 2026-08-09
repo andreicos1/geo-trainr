@@ -2,7 +2,13 @@ import "server-only";
 import { zodFunction } from "openai/helpers/zod";
 import { getOpenRouterClient, OPENROUTER_MODEL } from "./client";
 import { RoundAnalysisSchema } from "./schema";
-import type { AiGuess, Clue, RoundAnalysis } from "@/types/game";
+import {
+  COUNTRY_COVERAGE,
+  CONTINENTS,
+  getCountry,
+  getCountriesForContinent,
+} from "@/lib/geo/countries-coverage";
+import type { AiGuess, Clue, GameScope, RoundAnalysis } from "@/types/game";
 
 const IMAGE_SIZE = 640;
 const TOOL_NAME = "submit_round_analysis";
@@ -61,7 +67,35 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
-const SYSTEM_PROMPT = `You are an expert GeoGuessr player analyzing a single Street View image.
+/**
+ * Describes the game's scope restriction to the model, and lists the exact
+ * set of countries it's allowed to guess among. Without this, the AI would
+ * play a harder, unconstrained version of the game than the human — who
+ * always knows (and sees in the UI) whether they're guessing worldwide, a
+ * specific continent, or a single country — and it could "guess" a country
+ * with no Street View coverage at all, which the human never could since
+ * every round is sampled from `COUNTRY_COVERAGE`.
+ */
+function describeScopeConstraint(scope: GameScope): string {
+  if (scope.type === "country") {
+    const name = getCountry(scope.code)?.name ?? scope.code;
+    return `This game is restricted to a single country: the image is guaranteed to be from somewhere inside ${name}. Set "country" to "${name}" and give your best-guess latitude/longitude within it.`;
+  }
+
+  if (scope.type === "continent") {
+    const label = CONTINENTS.find((c) => c.code === scope.code)?.label ?? scope.code;
+    const countries = getCountriesForContinent(scope.code).map((c) => c.name);
+    return `This game is restricted to ${label}. The image is guaranteed to be from one of these countries (the only ones with Street View coverage there): ${countries.join(", ")}. Set "country" to exactly one of these names.`;
+  }
+
+  const countries = COUNTRY_COVERAGE.map((c) => c.name);
+  return `This game draws locations only from countries with Google Street View coverage. The image is guaranteed to be from one of these countries: ${countries.join(", ")}. Set "country" to exactly one of these names — never a country outside this list.`;
+}
+
+function buildSystemPrompt(scope: GameScope): string {
+  return `You are an expert GeoGuessr player analyzing a single Street View image.
+
+${describeScopeConstraint(scope)}
 
 Identify 3 to 8 distinct, specific visual clues in the image that a skilled player would use to narrow down the location: things like road markings and signage, license plates, architecture and roofing style, vegetation and terrain, road/bollard/pole design, driving side, writing systems or languages visible, and similar. For each clue, give a tight bounding box around exactly where it appears in the image, normalized to a 0-1 fraction of the image's width and height (x/y is the top-left corner).
 
@@ -70,6 +104,7 @@ Then give your own single best-guess location: a country, latitude/longitude, an
 Be specific and concrete in every clue explanation — name the actual detail you're looking at, not a generic category.
 
 Call the ${TOOL_NAME} tool exactly once with your full analysis. Do not respond with plain text.`;
+}
 
 const analysisTool = zodFunction({
   name: TOOL_NAME,
@@ -77,8 +112,11 @@ const analysisTool = zodFunction({
   parameters: RoundAnalysisSchema,
 });
 
-export async function analyzeRound(args: FetchImageArgs): Promise<RoundAnalysis> {
-  const image = await fetchStreetViewImage(args);
+export async function analyzeRound(
+  args: FetchImageArgs & { scope: GameScope },
+): Promise<RoundAnalysis> {
+  const { scope, ...imageArgs } = args;
+  const image = await fetchStreetViewImage(imageArgs);
 
   const client = getOpenRouterClient();
 
@@ -92,7 +130,7 @@ export async function analyzeRound(args: FetchImageArgs): Promise<RoundAnalysis>
         role: "user",
         content: [
           { type: "image_url", image_url: { url: image.dataUrl } },
-          { type: "text", text: SYSTEM_PROMPT },
+          { type: "text", text: buildSystemPrompt(scope) },
         ],
       },
     ],

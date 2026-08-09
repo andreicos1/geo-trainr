@@ -5,7 +5,7 @@ import RoundScreen from "./RoundScreen";
 import FeedbackScreen from "./FeedbackScreen";
 import SummaryScreen from "./SummaryScreen";
 import { findRandomLocation } from "@/lib/geo/random-location";
-import { haversineDistanceKm, scaleForScope, scoreFromDistance } from "@/lib/geo/scoring";
+import { haversineDistanceKm, mapDiagonalKm, scoreFromDistance } from "@/lib/geo/scoring";
 import type {
   AiRoundResult,
   CompletedRound,
@@ -106,7 +106,7 @@ function reducer(state: GameState, action: Action): GameState {
 export default function GameSession({ initialScope }: GameSessionProps) {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [retryToken, setRetryToken] = useState(0);
-  const scale = useMemo(() => scaleForScope(initialScope), [initialScope]);
+  const diagonalKm = useMemo(() => mapDiagonalKm(initialScope), [initialScope]);
 
   // Find a random Street View location whenever a new round starts, and —
   // as soon as it's found — kick off the AI's analysis in the background.
@@ -127,6 +127,7 @@ export default function GameSession({ initialScope }: GameSessionProps) {
         pitch: location.initialPov.pitch,
         zoom: location.initialPov.zoom,
         panoId: location.panoId,
+        scope: initialScope,
       }),
     })
       .then(async (res) => {
@@ -141,7 +142,7 @@ export default function GameSession({ initialScope }: GameSessionProps) {
           { lat: analysis.aiGuess.lat, lng: analysis.aiGuess.lng },
           location.actual,
         );
-        const aiScore = scoreFromDistance(aiDistanceKm, scale);
+        const aiScore = scoreFromDistance(aiDistanceKm, diagonalKm);
         dispatch({ type: "AI_SUCCESS", roundIndex, analysis, aiDistanceKm, aiScore });
       })
       .catch((err: unknown) => {
@@ -185,7 +186,7 @@ export default function GameSession({ initialScope }: GameSessionProps) {
     if (!location) return;
 
     const distanceKm = haversineDistanceKm(guess, location.actual);
-    const score = scoreFromDistance(distanceKm, scale);
+    const score = scoreFromDistance(distanceKm, diagonalKm);
 
     const round: CompletedRound = {
       roundIndex: state.roundIndex,

@@ -57,6 +57,11 @@ export default function GuessMap({ value, onChange, readOnlyResult, className }:
         streetViewControl: false,
         mapTypeControl: false,
         fullscreenControl: false,
+        // Default "auto" gesture handling treats this as a page-embedded map
+        // and requires ctrl+scroll to zoom (with a nag overlay on plain
+        // scroll). "greedy" lets the scroll wheel zoom straight away,
+        // centered on the cursor, no modifier key needed.
+        gestureHandling: "greedy",
         styles: MUTED_MAP_STYLE,
       });
       mapRef.current = map;
