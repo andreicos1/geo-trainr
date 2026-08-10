@@ -27,9 +27,10 @@ export interface AiGuess {
   lng: number;
   confidence: number;
   reasoningSummary: string;
+  pinpointReasoning: string;
 }
 
-export interface PostMortemMistake {
+export interface SelfCheckMistake {
   clueLabel: string;
   whatWasWrong: string;
   actually: string;
@@ -42,23 +43,31 @@ export interface PostMortemMistake {
  * this step fails, the round still has a perfectly usable guess/clue
  * breakdown from the first call.
  */
-export interface PostMortem {
+export interface SelfCheck {
   verdict: "correct" | "close" | "wrong";
   summary: string;
-  mistakes: PostMortemMistake[];
+  mistakes: SelfCheckMistake[];
 }
 
 export interface RoundAnalysis {
   image: { dataUrl: string; width: number; height: number };
   clues: Clue[];
   aiGuess: AiGuess;
-  postMortem?: PostMortem;
+  selfCheck?: SelfCheck;
 }
 
 /** A location for one round, resolved from the random-location search. */
 export interface RoundLocation {
   actual: LatLng;
   panoId: string;
+  /**
+   * The country this round was actually sampled from — known for certain at
+   * sampling time (it's what `random-location.ts` picked before searching
+   * for a panorama), so it's carried along rather than re-derived later by
+   * reverse-geocoding `actual` against country bounding boxes, which is
+   * unreliable near borders and for countries whose bboxes overlap.
+   */
+  country: string;
   /**
    * The heading/pitch/zoom the panorama opens at, chosen once per round.
    * Used both as the Street View panorama's initial view and as the

@@ -5,6 +5,8 @@ const latLngSchema = z.object({ lat: z.number(), lng: z.number() });
 
 const roundLocationSchema = z.object({
   actual: latLngSchema,
+  // Optional: older persisted snapshots (pre-country-tracking) won't have this field.
+  country: z.string().optional(),
   panoId: z.string(),
   initialPov: z.object({ heading: z.number(), pitch: z.number(), zoom: z.number() }),
 });
@@ -30,6 +32,8 @@ const aiGuessSchema = z.object({
   lng: z.number(),
   confidence: z.number(),
   reasoningSummary: z.string(),
+  // Optional: older persisted snapshots (pre-pinpointReasoning) won't have this field.
+  pinpointReasoning: z.string().optional(),
 });
 
 const roundAnalysisSchema = z.object({

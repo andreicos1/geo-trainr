@@ -39,18 +39,27 @@ export const RoundAnalysisSchema = z.object({
       .describe("Your confidence in this guess, from 0 (pure guess) to 1 (certain)."),
     reasoningSummary: z
       .string()
-      .describe("A 1-3 sentence summary of how the clues combine into this guess."),
+      .describe(
+        "A 1-3 sentence summary of how the clues combine into this country/region-level guess.",
+      ),
+    pinpointReasoning: z
+      .string()
+      .describe(
+        "1-2 sentences explaining specifically why the pin landed at this exact lat/lng, not just the country. " +
+          "Name whatever narrowed it beyond the country: a specific city/region identified from signage or " +
+          "architecture, terrain or vegetation matching a particular part of the country, road infrastructure " +
+          "density suggesting urban vs. rural, etc. If nothing in the image narrows it down further than 'somewhere " +
+          "in this country', say so plainly instead of defaulting to the capital or largest city without evidence.",
+      ),
   }),
 });
 
 export type RoundAnalysisParsed = z.infer<typeof RoundAnalysisSchema>;
 
-export const PostMortemSchema = z.object({
-  verdict: z
-    .enum(["correct", "close", "wrong"])
-    .describe(
-      "'correct' if the guessed country matches the real one, 'close' if it's wrong but neighboring/plausible given the clues, 'wrong' if it's a clear miss.",
-    ),
+// Note: no "verdict" field here — whether the guess counts as correct/close/wrong
+// is derived deterministically from the actual score in analyze.ts, not left to the
+// model's self-assessment (it was prone to calling a same-city guess "close").
+export const SelfCheckSchema = z.object({
   summary: z
     .string()
     .describe(
@@ -77,4 +86,4 @@ export const PostMortemSchema = z.object({
     ),
 });
 
-export type PostMortemParsed = z.infer<typeof PostMortemSchema>;
+export type SelfCheckParsed = z.infer<typeof SelfCheckSchema>;

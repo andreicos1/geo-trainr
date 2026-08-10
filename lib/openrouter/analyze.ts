@@ -1,7 +1,11 @@
 import "server-only";
 import { zodFunction } from "openai/helpers/zod";
-import { getOpenRouterClient, OPENROUTER_MODEL } from "./client";
-import { PostMortemSchema, RoundAnalysisSchema } from "./schema";
+import {
+  getOpenRouterClient,
+  OPENROUTER_MODEL,
+  OPENROUTER_SELF_CHECK_MODEL,
+} from "./client";
+import { SelfCheckSchema, RoundAnalysisSchema } from "./schema";
 import {
   COUNTRY_COVERAGE,
   CONTINENTS,
@@ -9,11 +13,13 @@ import {
   getCountriesForContinent,
   findCountryByPoint,
 } from "@/lib/geo/countries-coverage";
-import type { AiGuess, Clue, GameScope, PostMortem, RoundAnalysis } from "@/types/game";
+import { haversineDistanceKm, mapDiagonalKm, scoreFromDistance } from "@/lib/geo/scoring";
+import { MAX_SCORE_PER_ROUND } from "@/types/game";
+import type { AiGuess, Clue, GameScope, SelfCheck, RoundAnalysis } from "@/types/game";
 
 const IMAGE_SIZE = 640;
 const TOOL_NAME = "submit_round_analysis";
-const POST_MORTEM_TOOL_NAME = "submit_post_mortem";
+const SELF_CHECK_TOOL_NAME = "submit_self_check";
 
 interface FetchImageArgs {
   lat: number;
@@ -69,6 +75,20 @@ function clamp01(n: number): number {
   return Math.min(1, Math.max(0, n));
 }
 
+// Score thresholds (out of MAX_SCORE_PER_ROUND) that decide the self-check
+// verdict. Deliberately not left to the model's own judgment: it would
+// sometimes call a guess "close" even when it landed in the same city,
+// because it was reasoning about the guess qualitatively rather than off
+// the actual scored distance.
+const VERDICT_CORRECT_MIN_SCORE = 4200;
+const VERDICT_CLOSE_MIN_SCORE = 1500;
+
+function verdictFromScore(score: number): SelfCheck["verdict"] {
+  if (score >= VERDICT_CORRECT_MIN_SCORE) return "correct";
+  if (score >= VERDICT_CLOSE_MIN_SCORE) return "close";
+  return "wrong";
+}
+
 /**
  * Describes the game's scope restriction to the model, and lists the exact
  * set of countries it's allowed to guess among. Without this, the AI would
@@ -103,7 +123,7 @@ Identify 3 to 8 distinct, specific visual clues in the image that a skilled play
 
 Then give your own single best-guess location: a country, latitude/longitude, and a confidence from 0 to 1. Base the guess on the clues you identified, weighing them the way an expert would.
 
-Be specific and concrete in every clue explanation — name the actual detail you're looking at, not a generic category.
+Be specific and concrete in every clue explanation — name the actual detail you're looking at, not a generic category. This applies especially to the final pin placement: don't silently default to a country's capital or biggest city. If a clue narrows the location to a specific city, region, coastline, or landscape, say which one and why; if nothing in the image narrows it beyond the country itself, say that explicitly rather than picking an unjustified specific point.
 
 Call the ${TOOL_NAME} tool exactly once with your full analysis. Do not respond with plain text.`;
 }
@@ -114,26 +134,31 @@ const analysisTool = zodFunction({
   parameters: RoundAnalysisSchema,
 });
 
-const postMortemTool = zodFunction({
-  name: POST_MORTEM_TOOL_NAME,
+const selfCheckTool = zodFunction({
+  name: SELF_CHECK_TOOL_NAME,
   description: "Submit a self-critique comparing the earlier guess against the real location.",
-  parameters: PostMortemSchema,
+  parameters: SelfCheckSchema,
 });
 
 /**
- * Builds the follow-up prompt for the second call: it restates the model's
- * own first-call output as plain text (rather than replaying the raw
+ * Builds the follow-up prompt for the second call: it restates the first
+ * call's output as plain text (rather than replaying the raw
  * tool-call/tool-response messages) since that's simpler to assemble
- * correctly and reads just as well to the model.
+ * correctly and reads just as well to the model. The second call runs on a
+ * different, cheaper model, so this restatement is the only way it sees the
+ * guess at all — it's addressed in the second person to keep the critique
+ * in the single "the AI grading itself" voice the UI presents.
  */
-function buildPostMortemPrompt(params: {
+function buildSelfCheckPrompt(params: {
   clues: Clue[];
   aiGuess: AiGuess;
   actualLat: number;
   actualLng: number;
   actualCountry?: string;
+  score: number;
+  verdict: SelfCheck["verdict"];
 }): string {
-  const { clues, aiGuess, actualLat, actualLng, actualCountry } = params;
+  const { clues, aiGuess, actualLat, actualLng, actualCountry, score, verdict } = params;
   const cluesText = clues
     .map(
       (c, i) =>
@@ -147,37 +172,51 @@ Clues you identified:
 ${cluesText}
 
 Your guess: ${aiGuess.country} (${aiGuess.lat.toFixed(4)}, ${aiGuess.lng.toFixed(4)}), confidence ${aiGuess.confidence}.
-Your reasoning: ${aiGuess.reasoningSummary}
+Your country-level reasoning: ${aiGuess.reasoningSummary}
+Why you placed the pin there specifically: ${aiGuess.pinpointReasoning}
 
 The real location has now been revealed${actualCountry ? `: it's in ${actualCountry}` : ""}, at latitude ${actualLat.toFixed(4)}, longitude ${actualLng.toFixed(4)}.
 
-Look at the image again with this answer in mind. Be honest and specific: did any of the clues you named point the wrong way or get a detail wrong, and did your final guess land correctly, close, or clearly wrong? Only flag mistakes that actually matter — don't invent nitpicks to fill the list. Call the ${POST_MORTEM_TOOL_NAME} tool exactly once with your verdict.`;
+The scoring system has already graded this guess at ${score}/${MAX_SCORE_PER_ROUND} and classified it as "${verdict}" based purely on distance — that part is fixed and not yours to reassess. Your job here is just the narrative: look at the image again with the real answer in mind and be honest and specific about *why* it landed there. Did any of the clues you named point the wrong way or get a detail wrong? Only flag mistakes that actually matter — don't invent nitpicks to fill the list, and don't contradict the "${verdict}" rating in your summary (e.g. don't call it a near-miss if it was rated correct). Call the ${SELF_CHECK_TOOL_NAME} tool exactly once.`;
 }
 
 /**
  * Second, follow-up model call made after the real location is known,
- * asking the model to critique its own first-call guess. Best-effort: a
- * failure here shouldn't take down a round whose original guess/clues
- * already came back fine, so errors are swallowed and logged instead of
- * thrown.
+ * critiquing the first call's guess. Runs on OPENROUTER_SELF_CHECK_MODEL:
+ * the hard reasoning already happened in the first call, so this one only
+ * needs to write up the comparison. Best-effort: a failure here shouldn't
+ * take down a round whose original guess/clues already came back fine, so
+ * errors are swallowed and logged instead of thrown.
  */
-async function getPostMortem(params: {
+async function getSelfCheck(params: {
   client: ReturnType<typeof getOpenRouterClient>;
   image: { dataUrl: string };
   clues: Clue[];
   aiGuess: AiGuess;
   actualLat: number;
   actualLng: number;
-}): Promise<PostMortem | undefined> {
-  const { client, image, clues, aiGuess, actualLat, actualLng } = params;
-  const actualCountry = findCountryByPoint(actualLat, actualLng)?.name;
+  actualCountry?: string;
+  scope: GameScope;
+}): Promise<SelfCheck | undefined> {
+  const { client, image, clues, aiGuess, actualLat, actualLng, scope } = params;
+  // Prefer the country the round was actually sampled from (known with
+  // certainty by the caller); fall back to a bbox reverse-lookup only if
+  // that wasn't supplied — e.g. a resumed game from before this field
+  // existed. The bbox lookup is approximate (rectangles, not real borders)
+  // and was the source of occasional wrong-country mislabels in the
+  // self-check text.
+  const actualCountry = params.actualCountry || findCountryByPoint(actualLat, actualLng)?.name;
+
+  const distanceKm = haversineDistanceKm({ lat: aiGuess.lat, lng: aiGuess.lng }, { lat: actualLat, lng: actualLng });
+  const score = scoreFromDistance(distanceKm, mapDiagonalKm(scope));
+  const verdict = verdictFromScore(score);
 
   try {
     const completion = await client.chat.completions.parse({
-      model: OPENROUTER_MODEL,
+      model: OPENROUTER_SELF_CHECK_MODEL,
       max_tokens: 1500,
-      tools: [postMortemTool],
-      tool_choice: { type: "function", function: { name: POST_MORTEM_TOOL_NAME } },
+      tools: [selfCheckTool],
+      tool_choice: { type: "function", function: { name: SELF_CHECK_TOOL_NAME } },
       messages: [
         {
           role: "user",
@@ -185,7 +224,15 @@ async function getPostMortem(params: {
             { type: "image_url", image_url: { url: image.dataUrl } },
             {
               type: "text",
-              text: buildPostMortemPrompt({ clues, aiGuess, actualLat, actualLng, actualCountry }),
+              text: buildSelfCheckPrompt({
+                clues,
+                aiGuess,
+                actualLat,
+                actualLng,
+                actualCountry,
+                score,
+                verdict,
+              }),
             },
           ],
         },
@@ -194,20 +241,20 @@ async function getPostMortem(params: {
 
     const toolCall = completion.choices[0]?.message.tool_calls?.[0];
     const parsed = toolCall?.function.parsed_arguments as
-      | ReturnType<typeof PostMortemSchema.parse>
+      | ReturnType<typeof SelfCheckSchema.parse>
       | undefined;
 
-    return parsed;
+    return parsed && { ...parsed, verdict };
   } catch (err) {
-    console.error("post-mortem analysis failed:", err);
+    console.error("self-check analysis failed:", err);
     return undefined;
   }
 }
 
 export async function analyzeRound(
-  args: FetchImageArgs & { scope: GameScope },
+  args: FetchImageArgs & { scope: GameScope; actualCountry?: string },
 ): Promise<RoundAnalysis> {
-  const { scope, ...imageArgs } = args;
+  const { scope, actualCountry, ...imageArgs } = args;
   const { lat: actualLat, lng: actualLng } = imageArgs;
   const image = await fetchStreetViewImage(imageArgs);
 
@@ -256,16 +303,19 @@ export async function analyzeRound(
     lng: parsed.guess.lng,
     confidence: clamp01(parsed.guess.confidence),
     reasoningSummary: parsed.guess.reasoningSummary,
+    pinpointReasoning: parsed.guess.pinpointReasoning,
   };
 
-  const postMortem = await getPostMortem({
+  const selfCheck = await getSelfCheck({
     client,
     image,
     clues,
     aiGuess,
     actualLat,
     actualLng,
+    actualCountry,
+    scope,
   });
 
-  return { image, clues, aiGuess, postMortem };
+  return { image, clues, aiGuess, selfCheck };
 }

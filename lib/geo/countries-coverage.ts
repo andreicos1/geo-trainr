@@ -18,9 +18,15 @@ import type { Continent, GameScope } from "@/types/game";
  * lookup — not currently worth the complexity for one country.
  *
  * `bboxes` are rough [south, west, north, east] boxes over land/road
- * network areas with known coverage. They don't need to be precise: the
- * random-location sampler retries on a 50km panorama search radius, so
- * minor overlap with water or uncovered interior is tolerated.
+ * network areas with known coverage. They don't need to be precise about
+ * *coverage*: the random-location sampler retries on a 50km panorama
+ * search radius, so overlap with water or uncovered interior is tolerated.
+ * They must be precise about *borders*, though — a box has to stay inside
+ * its country's real borders, because the sampler also uses these boxes to
+ * check that the panorama Street View snapped to is still in the country
+ * the round claims. A box that spills across a border both samples the
+ * neighbour and accepts a snap into it, handing the player a round labelled
+ * with the wrong country.
  *
  * `extentBbox` is a separate, rough [south, west, north, east] box for the
  * country's *real* geographic extent, used only by the scoring formula's
@@ -335,7 +341,7 @@ export const COUNTRY_COVERAGE: CountryCoverage[] = [
     continent: "SA",
     bboxes: [
       [-25, -49, -20, -42], // Southeast (Sao Paulo/Rio)
-      [-31, -57, -27, -49], // South
+      [-30.2, -53.5, -25.2, -48.5], // South (Porto Alegre-Curitiba)
     ],
     extentBbox: [-33.7, -73.9, 5.3, -34.8],
   },
@@ -418,7 +424,7 @@ export function hasCoverage(code: string): boolean {
 
 /**
  * Finds which covered country's sampling boxes a point falls inside, used
- * to tell the AI's post-mortem step the real answer's country name without
+ * to tell the AI's self-check step the real answer's country name without
  * a separate reverse-geocoding call. Checks `bboxes` first (where a round's
  * point always lands, since that's what `random-location.ts` samples from
  * and Street View snaps to nearby imagery), then falls back to

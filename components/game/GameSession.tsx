@@ -119,7 +119,13 @@ function computeInitialState(scope: GameScope): GameState {
       return {
         phase: active.phase,
         roundIndex: active.roundIndex,
-        currentLocation: active.currentLocation,
+        // `country` was added after this schema shipped, so older
+        // snapshots may be missing it — fall back to "" rather than widen
+        // the RoundLocation type, since the AI analysis fetch will just
+        // fall back to bbox reverse-lookup when it's blank (see analyze.ts).
+        currentLocation: active.currentLocation
+          ? { ...active.currentLocation, country: active.currentLocation.country ?? "" }
+          : null,
         rounds: active.rounds,
         aiResults: active.aiResults as unknown as Record<number, AiRoundResult>,
         locationError: active.locationError,
@@ -166,6 +172,7 @@ export default function GameSession({ initialScope }: GameSessionProps) {
         zoom: location.initialPov.zoom,
         panoId: location.panoId,
         scope: initialScope,
+        actualCountry: location.country,
       }),
     })
       .then(async (res) => {

@@ -3,17 +3,17 @@
 import ScoreBadge from "./ScoreBadge";
 import ClueOverlay from "./ClueOverlay";
 import GuessMap from "@/components/guess-map/GuessMap";
-import type { AiRoundResult, CompletedRound, PostMortem } from "@/types/game";
+import type { AiRoundResult, CompletedRound, SelfCheck } from "@/types/game";
 import { MAX_SCORE_PER_ROUND, ROUNDS_PER_GAME } from "@/types/game";
 
-const VERDICT_STYLES: Record<PostMortem["verdict"], { label: string; className: string }> = {
+const VERDICT_STYLES: Record<SelfCheck["verdict"], { label: string; className: string }> = {
   correct: { label: "Nailed it", className: "border-emerald-400/30 bg-emerald-400/10 text-emerald-300" },
   close: { label: "Close", className: "border-amber-400/30 bg-amber-400/10 text-amber-300" },
   wrong: { label: "Missed", className: "border-red-400/30 bg-red-400/10 text-red-300" },
 };
 
-function PostMortemSection({ postMortem }: { postMortem: PostMortem }) {
-  const verdict = VERDICT_STYLES[postMortem.verdict];
+function SelfCheckSection({ selfCheck }: { selfCheck: SelfCheck }) {
+  const verdict = VERDICT_STYLES[selfCheck.verdict];
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-white/10 bg-white/5 px-4 py-3">
@@ -27,10 +27,10 @@ function PostMortemSection({ postMortem }: { postMortem: PostMortem }) {
           AI Self-Check
         </h4>
       </div>
-      <p className="text-sm text-slate-300">{postMortem.summary}</p>
-      {postMortem.mistakes.length > 0 && (
+      <p className="text-sm text-slate-300">{selfCheck.summary}</p>
+      {selfCheck.mistakes.length > 0 && (
         <ul className="flex flex-col gap-2">
-          {postMortem.mistakes.map((mistake, i) => (
+          {selfCheck.mistakes.map((mistake, i) => (
             <li key={i} className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm">
               <span className="font-semibold text-red-300">{mistake.clueLabel}:</span>{" "}
               <span className="text-slate-300">{mistake.whatWasWrong}</span>
@@ -131,14 +131,22 @@ export default function FeedbackScreen({ round, aiResult, onNext }: FeedbackScre
         {analysis && (
           <div className="flex flex-col gap-4">
             <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
-              <span className="font-semibold text-orange-400">
-                AI guessed {analysis.aiGuess.country}
-              </span>{" "}
-              ({Math.round(analysis.aiGuess.confidence * 100)}% confidence) —{" "}
-              {analysis.aiGuess.reasoningSummary}
+              <p>
+                <span className="font-semibold text-orange-400">
+                  AI guessed {analysis.aiGuess.country}
+                </span>{" "}
+                ({Math.round(analysis.aiGuess.confidence * 100)}% confidence) —{" "}
+                {analysis.aiGuess.reasoningSummary}
+              </p>
+              {analysis.aiGuess.pinpointReasoning && (
+                <p className="mt-2 text-slate-400">
+                  <span className="font-medium text-slate-300">Why this exact spot:</span>{" "}
+                  {analysis.aiGuess.pinpointReasoning}
+                </p>
+              )}
             </div>
             <ClueOverlay imageUrl={analysis.image.dataUrl} clues={analysis.clues} />
-            {analysis.postMortem && <PostMortemSection postMortem={analysis.postMortem} />}
+            {analysis.selfCheck && <SelfCheckSection selfCheck={analysis.selfCheck} />}
           </div>
         )}
       </div>

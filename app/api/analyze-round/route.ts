@@ -17,6 +17,7 @@ const requestSchema = z.object({
   zoom: z.number(),
   panoId: z.string().optional(),
   scope: gameScopeSchema,
+  actualCountry: z.string().optional(),
 });
 
 export async function POST(request: Request) {
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const { actualLat, actualLng, heading, pitch, zoom, scope } = parsed.data;
+  const { actualLat, actualLng, heading, pitch, zoom, scope, actualCountry } = parsed.data;
 
   try {
     const analysis = await analyzeRound({
@@ -45,6 +46,7 @@ export async function POST(request: Request) {
       pitch,
       zoom,
       scope,
+      actualCountry,
     });
     return Response.json(analysis);
   } catch (err) {

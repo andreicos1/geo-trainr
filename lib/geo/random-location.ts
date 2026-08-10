@@ -63,6 +63,13 @@ function randomPointInBbox([south, west, north, east]: Bbox): google.maps.LatLng
   };
 }
 
+function isInBbox(
+  { lat, lng }: google.maps.LatLngLiteral,
+  [south, west, north, east]: Bbox,
+): boolean {
+  return lat >= south && lat <= north && lng >= west && lng <= east;
+}
+
 async function tryOneCountry(
   streetViewService: google.maps.StreetViewService,
   country: CountryCoverage,
@@ -78,8 +85,17 @@ async function tryOneCountry(
       });
       const location = response.data.location;
       if (location?.latLng && location.pano) {
+        const snapped = { lat: location.latLng.lat(), lng: location.latLng.lng() };
+        // The search radius lets Street View snap up to 50km away from the
+        // sampled point, which near a border can land the panorama in a
+        // neighbouring country while the round still claims to be in
+        // `country`. Since every bbox is kept inside its country's real
+        // borders, requiring the *snapped* point to land back in one of
+        // them rejects those cross-border snaps.
+        if (!country.bboxes.some((bbox) => isInBbox(snapped, bbox))) continue;
         return {
-          actual: { lat: location.latLng.lat(), lng: location.latLng.lng() },
+          actual: snapped,
+          country: country.name,
           panoId: location.pano,
           initialPov: { heading: Math.random() * 360, pitch: 0, zoom: 0 },
         };
