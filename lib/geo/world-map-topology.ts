@@ -14,14 +14,18 @@ import worldTopoJson from "world-atlas/countries-50m.json";
  * below makes the patch a no-op rather than silently moving the wrong
  * shape.
  */
-interface CountryGeometry {
+export interface CountryGeometry {
   id?: string;
   type: string;
+  /** Arc indices: `number[][]` for a Polygon, `number[][][]` for a MultiPolygon. */
   arcs: unknown[];
 }
 
-interface CountriesTopology {
+export interface CountriesTopology {
   objects: { countries: { geometries: CountryGeometry[] } };
+  /** Quantized, delta-encoded arcs, shared between geometries. */
+  arcs: number[][][];
+  transform: { scale: [number, number]; translate: [number, number] };
 }
 
 const RUSSIA_ID = "643";

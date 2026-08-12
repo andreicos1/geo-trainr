@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "Bash(curl -s http://localhost:3000/)",
-      "Bash(curl -s \"http://localhost:3000/play?scope=globe\")"
+      "Bash(curl -s \"http://localhost:3000/play?scope=globe\")",
+      "Bash(node audit.js)",
+      "Bash(node -e ' *)",
+      "Bash(node generate-boxes.js)",
+      "Bash(node verify-generated.js)",
+      "Bash(node city-regression.js)",
+      "Bash(npx tsx *)"
     ]
   }
 }

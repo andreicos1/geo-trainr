@@ -6,6 +6,7 @@ import {
   getCountry,
   type CountryCoverage,
 } from "@/lib/geo/countries-coverage";
+import { countryBbox, unionBbox, type Bbox } from "@/lib/geo/country-shapes";
 
 const EARTH_RADIUS_KM = 6371;
 
@@ -46,30 +47,20 @@ const SCORE_DECAY_CONSTANT = 10;
 /** Guesses this close always score max, mirroring GeoGuessr's own floor for near-perfect pins. */
 const PERFECT_GUESS_RADIUS_KM = 0.025;
 
-type BBox = [south: number, west: number, north: number, east: number];
-
-function unionBoundingBox(boxes: BBox[]): BBox {
-  let [south, west, north, east] = boxes[0];
-  for (const box of boxes.slice(1)) {
-    south = Math.min(south, box[0]);
-    west = Math.min(west, box[1]);
-    north = Math.max(north, box[2]);
-    east = Math.max(east, box[3]);
-  }
-  return [south, west, north, east];
-}
-
 /**
- * The bounding box(es) that best represent a scope's real play area for
- * scoring — each country's `extentBbox` when set (its real geographic
- * extent), falling back to its coverage `bboxes` otherwise. Deliberately
- * *not* the same boxes the random-location sampler draws from: those are
- * narrow city-level clusters for many large countries, and scoring against
- * them would make guesses in, say, India or Brazil score far harsher than
- * GeoGuessr does for the same distance. See countries-coverage.ts.
+ * The bounding boxes of a scope's real play area, taken straight from
+ * country borders. These used to be hand-drawn rectangles per country, with
+ * an `extentBbox` override needed wherever the sampler's boxes were narrow
+ * city clusters standing in for a whole country — scoring against those
+ * would have treated India or Brazil as artificially small and punished long
+ * guesses far more harshly than GeoGuessr does. Real borders remove the
+ * distortion and the override along with it.
  */
-function boxesForScope(scope: GameScope): BBox[] {
-  const box = (c: CountryCoverage): BBox[] => (c.extentBbox ? [c.extentBbox] : c.bboxes);
+function boxesForScope(scope: GameScope): Bbox[] {
+  const box = (c: CountryCoverage): Bbox[] => {
+    const bbox = countryBbox(c.code);
+    return bbox ? [bbox] : [];
+  };
   if (scope.type === "country") {
     const country = getCountry(scope.code);
     return country ? box(country) : [];
@@ -86,7 +77,7 @@ function boxesForScope(scope: GameScope): BBox[] {
 export function mapDiagonalKm(scope: GameScope): number {
   const boxes = boxesForScope(scope);
   if (boxes.length === 0) return 20015; // fallback: half the Earth's circumference
-  const [south, west, north, east] = unionBoundingBox(boxes);
+  const [south, west, north, east] = unionBbox(boxes);
   return haversineDistanceKm({ lat: south, lng: west }, { lat: north, lng: east });
 }
 
