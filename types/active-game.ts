@@ -34,6 +34,9 @@ const aiGuessSchema = z.object({
   reasoningSummary: z.string(),
   // Optional: older persisted snapshots (pre-pinpointReasoning) won't have this field.
   pinpointReasoning: z.string().optional(),
+  // Optional for the same reason, and also genuinely absent whenever the
+  // image didn't narrow the location past the country.
+  area: z.string().optional(),
 });
 
 const roundAnalysisSchema = z.object({

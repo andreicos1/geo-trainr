@@ -84,38 +84,76 @@ export default function StreetViewPanorama({
   );
 }
 
-/** Rotating N/E/S/W dial showing which way the panorama is currently facing. */
+/** Degrees of arc visible across the compass bar, and how wide that bar is. */
+const COMPASS_WIDTH = 240;
+const COMPASS_ARC = 120;
+const PX_PER_DEG = COMPASS_WIDTH / COMPASS_ARC;
+
+/** Every 15° gets a tick; multiples of 45° are labelled. */
+const COMPASS_MARKS = Array.from({ length: 24 }, (_, i) => i * 15).map((angle) => ({
+  angle,
+  label: angle % 45 === 0 ? ["N", "NE", "E", "SE", "S", "SW", "W", "NW"][angle / 45] : null,
+  cardinal: angle % 90 === 0,
+}));
+
+/**
+ * GeoGuessr-style compass: a horizontal strip of cardinal directions at the
+ * top of the panorama that scrolls under a fixed centre marker as you pan.
+ */
 function Compass({ heading }: { heading: number }) {
+  // Three copies of the 360° strip so the ends never scroll into view.
+  const copies = [-360, 0, 360];
+
   return (
     <div
       aria-hidden
-      className="pointer-events-none absolute bottom-4 left-4 z-10 flex h-32 w-32 items-center justify-center rounded-full bg-black/60 backdrop-blur"
+      className="pointer-events-none absolute left-1/2 top-4 z-10 -translate-x-1/2"
     >
-      <svg
-        width="112"
-        height="112"
-        viewBox="0 0 40 40"
-        className="transition-transform duration-150 ease-out"
-        style={{ transform: `rotate(${-heading}deg)` }}
+      <div
+        className="relative h-9 overflow-hidden rounded-full bg-black/50 backdrop-blur"
+        style={{
+          width: COMPASS_WIDTH,
+          maskImage:
+            "linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
+          WebkitMaskImage:
+            "linear-gradient(to right, transparent, black 12%, black 88%, transparent)",
+        }}
       >
-        <circle cx="20" cy="20" r="17" fill="none" stroke="rgba(255,255,255,0.25)" strokeWidth="1.5" />
-        <line x1="20" y1="3" x2="20" y2="8" stroke="white" strokeWidth="1.5" />
-        <line x1="20" y1="32" x2="20" y2="37" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" />
-        <line x1="3" y1="20" x2="8" y2="20" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" />
-        <line x1="32" y1="20" x2="37" y2="20" stroke="rgba(255,255,255,0.5)" strokeWidth="1.5" />
-        <text x="20" y="15.5" textAnchor="middle" fontSize="7" fontWeight="bold" fill="#f87171">
-          N
-        </text>
-        <text x="20" y="27.5" textAnchor="middle" fontSize="6" fill="rgba(255,255,255,0.6)">
-          S
-        </text>
-        <text x="13" y="22.5" textAnchor="middle" fontSize="6" fill="rgba(255,255,255,0.6)">
-          W
-        </text>
-        <text x="27" y="22.5" textAnchor="middle" fontSize="6" fill="rgba(255,255,255,0.6)">
-          E
-        </text>
-      </svg>
+        <div
+          className="absolute left-1/2 top-0 h-full w-0"
+          style={{ transform: `translateX(${-heading * PX_PER_DEG}px)` }}
+        >
+          {copies.map((offset) =>
+            COMPASS_MARKS.map(({ angle, label, cardinal }) => (
+              <div
+                key={`${offset}-${angle}`}
+                className="absolute top-0 flex h-full -translate-x-1/2 flex-col items-center justify-center"
+                style={{ left: (angle + offset) * PX_PER_DEG }}
+              >
+                {label ? (
+                  <span
+                    className={
+                      label === "N"
+                        ? "text-[13px] font-bold leading-none text-red-400"
+                        : cardinal
+                          ? "text-[13px] font-bold leading-none text-white"
+                          : "text-[10px] font-semibold leading-none text-white/50"
+                    }
+                  >
+                    {label}
+                  </span>
+                ) : (
+                  <span className="h-1.5 w-px bg-white/30" />
+                )}
+              </div>
+            )),
+          )}
+        </div>
+      </div>
+
+      {/* Fixed centre marker: the direction you are currently facing. */}
+      <div className="absolute left-1/2 top-0 h-9 w-px -translate-x-1/2 bg-red-400/70" />
+      <div className="absolute left-1/2 top-0 h-0 w-0 -translate-x-1/2 border-x-[5px] border-t-[6px] border-x-transparent border-t-red-400" />
     </div>
   );
 }

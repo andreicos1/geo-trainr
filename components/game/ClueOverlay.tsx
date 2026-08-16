@@ -30,9 +30,17 @@ export default function ClueOverlay({ imageUrl, clues }: ClueOverlayProps) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="relative w-full overflow-hidden rounded-lg border border-white/10">
+      {/* No `overflow-hidden` here: markers straddle their box's corner, so a
+          box on the image edge has half its marker outside this container, and
+          a clipping ancestor would cut it off no matter its z-index. The image
+          carries its own rounding instead. */}
+      <div className="relative w-full rounded-lg border border-white/10">
         {/* eslint-disable-next-line @next/next/no-img-element -- exact bytes from the server, no optimization needed */}
-        <img src={imageUrl} alt="Street View capture analyzed by the AI" className="w-full" />
+        <img
+          src={imageUrl}
+          alt="Street View capture analyzed by the AI"
+          className="w-full rounded-lg"
+        />
         {clues.map((clue, i) => {
           const isActive = activeIndex === i;
           const box = clue.boundingBox;
@@ -48,13 +56,17 @@ export default function ClueOverlay({ imageUrl, clues }: ClueOverlayProps) {
               // Markers sit at each box's own corner, so they essentially
               // never collide, and every clue stays reliably hoverable
               // regardless of how deeply its box is nested.
+              //
+              // This wrapper deliberately has no z-index: that would make it a
+              // stacking context and trap its marker below the rectangles of
+              // later boxes. Leaving it `auto` lets the marker's own z-index
+              // compete directly against every rectangle on the image.
               className="pointer-events-none absolute"
               style={{
                 left: `${box.x * 100}%`,
                 top: `${box.y * 100}%`,
                 width: `${box.width * 100}%`,
                 height: `${box.height * 100}%`,
-                zIndex: isActive ? 100 : 1,
               }}
             >
               <div
@@ -62,6 +74,7 @@ export default function ClueOverlay({ imageUrl, clues }: ClueOverlayProps) {
                 style={{
                   borderColor: isActive ? "#fbbf24" : "rgba(56, 189, 248, 0.8)",
                   backgroundColor: isActive ? "rgba(251, 191, 36, 0.15)" : "transparent",
+                  zIndex: isActive ? 2 : 1,
                 }}
               />
               <button
@@ -71,7 +84,10 @@ export default function ClueOverlay({ imageUrl, clues }: ClueOverlayProps) {
                 onFocus={(evt) => activate(i, evt.currentTarget)}
                 onBlur={deactivate}
                 className="pointer-events-auto absolute left-0 top-0 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full text-xs font-bold text-white"
-                style={{ backgroundColor: isActive ? "#fbbf24" : "#0ea5e9" }}
+                style={{
+                  backgroundColor: isActive ? "#fbbf24" : "#0ea5e9",
+                  zIndex: isActive ? 100 : 10,
+                }}
               >
                 {i + 1}
               </button>
@@ -82,7 +98,7 @@ export default function ClueOverlay({ imageUrl, clues }: ClueOverlayProps) {
 
       {/* Rendered in a portal at viewport coordinates so the tooltip always
           draws above every other element on the page (score badges, the map,
-          the clue list) and is never clipped by this card's `overflow-hidden`. */}
+          the clue list) and is never clipped by an ancestor's overflow. */}
       {activeClue &&
         anchorRect &&
         createPortal(<ClueTooltip clue={activeClue} anchorRect={anchorRect} />, document.body)}
@@ -105,7 +121,10 @@ export default function ClueOverlay({ imageUrl, clues }: ClueOverlayProps) {
                 {clue.label}
               </span>
               {clue.suggests && (
-                <span className="ml-auto shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-300">
+                <span
+                  className="ml-auto max-w-[45%] shrink-0 truncate rounded-full bg-white/10 px-2 py-0.5 text-xs text-slate-300"
+                  title={clue.suggests}
+                >
                   {clue.suggests}
                 </span>
               )}
@@ -148,7 +167,10 @@ function ClueTooltip({ clue, anchorRect }: { clue: Clue; anchorRect: DOMRect }) 
           {clue.label}
         </span>
         {clue.suggests && (
-          <span className="ml-auto shrink-0 rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-slate-300">
+          <span
+            className="ml-auto max-w-[50%] shrink-0 truncate rounded-full bg-white/10 px-2 py-0.5 text-[10px] text-slate-300"
+            title={clue.suggests}
+          >
             {clue.suggests}
           </span>
         )}

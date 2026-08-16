@@ -6,7 +6,7 @@ import {
   getCountry,
   type CountryCoverage,
 } from "@/lib/geo/countries-coverage";
-import { countryBbox, unionBbox, type Bbox } from "@/lib/geo/country-shapes";
+import { playAreaSpreadKm } from "@/lib/geo/country-shapes";
 
 const EARTH_RADIUS_KM = 6371;
 
@@ -31,59 +31,78 @@ export function haversineDistanceKm(a: LatLng, b: LatLng): number {
 }
 
 /**
- * GeoGuessr's real scoring curve (reverse-engineered — see
- * https://latb.io/geoguessr/articles/the-maths) is:
+ * The curve is GeoGuessr's — an exponential decay in guess distance —
+ * expressed through the distance at which a round scores half marks:
  *
- *   S = 5000 * exp(-10 * d / D)
+ *   S = 5000 * 2^(-d / h)
  *
- * where `d` is the guess distance and `D` is the diagonal distance across
- * the play area's bounding box. `D` — not a fixed radius — is what makes a
- * single small country and the whole globe grade on different curves with
- * the same formula: a tighter box makes the same `d` a bigger fraction of
- * `D`, so it costs more points.
+ * On the world map GeoGuessr halves at roughly a thousand kilometres, which
+ * is what this anchors to; the rest of the file is about deriving `h` for a
+ * smaller play area.
  */
-const SCORE_DECAY_CONSTANT = 10;
+const GLOBE_HALF_SCORE_KM = 1050;
+
+/**
+ * How much a smaller play area tightens the curve.
+ *
+ * GeoGuessr normalizes distance by the map's own size, i.e. this exponent is
+ * 1: a map a tenth the size wants guesses ten times tighter for the same
+ * score. That is what made country rounds feel broken here. A small
+ * country's spread is barely 1% of the globe's, so the Netherlands demanded
+ * 9km accuracy for the 4,000 points that 345km earns on the world map, and
+ * a guess landing at the right end of the country, 100km out, scored 445.
+ *
+ * Dropping the exponent below 1 lets some of the world curve's forgiveness
+ * survive into small maps. At 0.7 the Netherlands halves at 51km rather than
+ * 29km: 25km out is worth 3,570 instead of 2,731, that same 100km guess
+ * 1,299 instead of 445, and a blind in-country guess ~1,100 instead of ~350
+ * — while pin-perfect play is still what separates 4,500 from 5,000. Globe
+ * scope is untouched (its own ratio is 1 under any exponent) and continents
+ * are nudged only slightly.
+ *
+ * Lower it to be gentler still, raise it towards 1 for GeoGuessr's own
+ * (brutal, on a country map) grading.
+ */
+const SCALE_EXPONENT = 0.7;
 
 /** Guesses this close always score max, mirroring GeoGuessr's own floor for near-perfect pins. */
 const PERFECT_GUESS_RADIUS_KM = 0.025;
 
 /**
- * The bounding boxes of a scope's real play area, taken straight from
- * country borders. These used to be hand-drawn rectangles per country, with
- * an `extentBbox` override needed wherever the sampler's boxes were narrow
- * city clusters standing in for a whole country — scoring against those
- * would have treated India or Brazil as artificially small and punished long
- * guesses far more harshly than GeoGuessr does. Real borders remove the
- * distortion and the override along with it.
+ * The countries a scope draws its rounds from — the same set the sampler
+ * uses, so the scale can never describe an area the game doesn't play.
  */
-function boxesForScope(scope: GameScope): Bbox[] {
-  const box = (c: CountryCoverage): Bbox[] => {
-    const bbox = countryBbox(c.code);
-    return bbox ? [bbox] : [];
-  };
+function codesForScope(scope: GameScope): string[] {
   if (scope.type === "country") {
     const country = getCountry(scope.code);
-    return country ? box(country) : [];
+    return country ? [country.code] : [];
   }
-  if (scope.type === "continent") return getCountriesForContinent(scope.code).flatMap(box);
-  return COUNTRY_COVERAGE.flatMap(box);
+  const countries: CountryCoverage[] =
+    scope.type === "continent" ? getCountriesForContinent(scope.code) : COUNTRY_COVERAGE;
+  return countries.map((c) => c.code);
 }
+
+/** Cached: every scope's scale is read relative to the whole globe's. */
+let globeSpreadKm = 0;
 
 /**
- * Diagonal distance (km) across a scope's play area — GeoGuessr's `D`.
- * Computed as the great-circle distance between the corners of the union of
- * that scope's coverage bounding boxes.
+ * The distance at which a guess in this scope scores half of the maximum.
+ *
+ * Play-area size enters through `playAreaSpreadKm` — how far apart two
+ * rounds in the scope typically fall — rather than through a bounding-box
+ * diagonal, which counted ocean and let one distant island rewrite a whole
+ * country's curve.
  */
-export function mapDiagonalKm(scope: GameScope): number {
-  const boxes = boxesForScope(scope);
-  if (boxes.length === 0) return 20015; // fallback: half the Earth's circumference
-  const [south, west, north, east] = unionBbox(boxes);
-  return haversineDistanceKm({ lat: south, lng: west }, { lat: north, lng: east });
+export function mapHalfScoreKm(scope: GameScope): number {
+  if (globeSpreadKm === 0) globeSpreadKm = playAreaSpreadKm(codesForScope({ type: "globe" }));
+  const spread = playAreaSpreadKm(codesForScope(scope));
+  if (spread === 0) return GLOBE_HALF_SCORE_KM; // unknown scope: grade it as the globe
+  return GLOBE_HALF_SCORE_KM * Math.pow(spread / globeSpreadKm, SCALE_EXPONENT);
 }
 
-/** GeoGuessr-style exponential decay score, capped to [0, MAX_SCORE_PER_ROUND]. */
-export function scoreFromDistance(distanceKm: number, diagonalKm: number): number {
+/** Exponential decay score, capped to [0, MAX_SCORE_PER_ROUND]. */
+export function scoreFromDistance(distanceKm: number, halfScoreKm: number): number {
   if (distanceKm <= PERFECT_GUESS_RADIUS_KM) return MAX_SCORE_PER_ROUND;
-  const raw = MAX_SCORE_PER_ROUND * Math.exp((-SCORE_DECAY_CONSTANT * distanceKm) / diagonalKm);
+  const raw = MAX_SCORE_PER_ROUND * Math.pow(2, -distanceKm / halfScoreKm);
   return Math.round(Math.max(0, Math.min(MAX_SCORE_PER_ROUND, raw)));
 }

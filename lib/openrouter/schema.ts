@@ -32,6 +32,14 @@ export const RoundAnalysisSchema = z.object({
     .describe("3 to 8 distinct visual clues identified in the image, ranked most-useful first."),
   guess: z.object({
     country: z.string().describe("Your best-guess country name."),
+    area: z
+      .string()
+      .nullable()
+      .describe(
+        "The specific sub-country area your pin sits in — a named city, region, province, state, or " +
+          "similar — or null if nothing in the image narrows the location beyond the country. Never " +
+          "name a place you can't justify from something visible in the image.",
+      ),
     lat: z.number().describe("Your best-guess latitude, decimal degrees."),
     lng: z.number().describe("Your best-guess longitude, decimal degrees."),
     confidence: z

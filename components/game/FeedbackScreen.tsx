@@ -3,7 +3,7 @@
 import ScoreBadge from "./ScoreBadge";
 import ClueOverlay from "./ClueOverlay";
 import GuessMap from "@/components/guess-map/GuessMap";
-import type { AiRoundResult, CompletedRound, SelfCheck } from "@/types/game";
+import type { AiGuess, AiRoundResult, CompletedRound, GameScope, SelfCheck } from "@/types/game";
 import { MAX_SCORE_PER_ROUND, ROUNDS_PER_GAME } from "@/types/game";
 
 const VERDICT_STYLES: Record<SelfCheck["verdict"], { label: string; className: string }> = {
@@ -45,15 +45,46 @@ function SelfCheckSection({ selfCheck }: { selfCheck: SelfCheck }) {
   );
 }
 
+/**
+ * The headline for the AI's guess, phrased around whatever was actually at
+ * stake. In a country-locked game the country was handed to the model, so
+ * "AI guessed Russia" states the premise back at the player — there, the only
+ * real finding is where inside the country it pinned. `showConfidence` is
+ * false when the headline names no area, since the model's confidence in a
+ * country it was told is meaningless.
+ */
+function describeAiGuess(
+  aiGuess: AiGuess,
+  scope: GameScope,
+): { headline: string; showConfidence: boolean } {
+  if (scope.type === "country") {
+    return aiGuess.area
+      ? { headline: `AI narrowed it to ${aiGuess.area}`, showConfidence: true }
+      : {
+          headline: `AI couldn't narrow it past ${aiGuess.country}`,
+          showConfidence: false,
+        };
+  }
+
+  return {
+    headline: aiGuess.area
+      ? `AI guessed ${aiGuess.area}, ${aiGuess.country}`
+      : `AI guessed ${aiGuess.country}`,
+    showConfidence: true,
+  };
+}
+
 interface FeedbackScreenProps {
   round: CompletedRound;
   aiResult: AiRoundResult;
+  scope: GameScope;
   onNext: () => void;
 }
 
-export default function FeedbackScreen({ round, aiResult, onNext }: FeedbackScreenProps) {
+export default function FeedbackScreen({ round, aiResult, scope, onNext }: FeedbackScreenProps) {
   const isLastRound = round.roundIndex === ROUNDS_PER_GAME - 1;
   const analysis = aiResult.status === "success" ? aiResult.analysis : null;
+  const guessSummary = analysis ? describeAiGuess(analysis.aiGuess, scope) : null;
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-6 px-4 py-8">
@@ -128,15 +159,14 @@ export default function FeedbackScreen({ round, aiResult, onNext }: FeedbackScre
           </div>
         )}
 
-        {analysis && (
+        {analysis && guessSummary && (
           <div className="flex flex-col gap-4">
             <div className="rounded-lg border border-white/10 bg-white/5 px-4 py-3 text-sm text-slate-200">
               <p>
-                <span className="font-semibold text-orange-400">
-                  AI guessed {analysis.aiGuess.country}
-                </span>{" "}
-                ({Math.round(analysis.aiGuess.confidence * 100)}% confidence) —{" "}
-                {analysis.aiGuess.reasoningSummary}
+                <span className="font-semibold text-orange-400">{guessSummary.headline}</span>
+                {guessSummary.showConfidence &&
+                  ` (${Math.round(analysis.aiGuess.confidence * 100)}% confidence)`}{" "}
+                — {analysis.aiGuess.reasoningSummary}
               </p>
               {analysis.aiGuess.pinpointReasoning && (
                 <p className="mt-2 text-slate-400">

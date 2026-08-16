@@ -5,7 +5,7 @@ import RoundScreen from "./RoundScreen";
 import FeedbackScreen from "./FeedbackScreen";
 import SummaryScreen from "./SummaryScreen";
 import { findRandomLocation } from "@/lib/geo/random-location";
-import { haversineDistanceKm, mapDiagonalKm, scoreFromDistance } from "@/lib/geo/scoring";
+import { haversineDistanceKm, mapHalfScoreKm, scoreFromDistance } from "@/lib/geo/scoring";
 import { clearActiveGame, getActiveGame, saveActiveGame, scopesEqual } from "@/lib/storage/active-game";
 import type {
   AiRoundResult,
@@ -138,7 +138,7 @@ function computeInitialState(scope: GameScope): GameState {
 export default function GameSession({ initialScope }: GameSessionProps) {
   const [state, dispatch] = useReducer(reducer, initialScope, computeInitialState);
   const [retryToken, setRetryToken] = useState(0);
-  const diagonalKm = useMemo(() => mapDiagonalKm(initialScope), [initialScope]);
+  const halfScoreKm = useMemo(() => mapHalfScoreKm(initialScope), [initialScope]);
 
   // If the reducer's initial state above came from a resumed game already
   // mid-round, this holds that round's index — read once, straight off the
@@ -187,7 +187,7 @@ export default function GameSession({ initialScope }: GameSessionProps) {
           { lat: analysis.aiGuess.lat, lng: analysis.aiGuess.lng },
           location.actual,
         );
-        const aiScore = scoreFromDistance(aiDistanceKm, diagonalKm);
+        const aiScore = scoreFromDistance(aiDistanceKm, halfScoreKm);
         dispatch({ type: "AI_SUCCESS", roundIndex, analysis, aiDistanceKm, aiScore });
       })
       .catch((err: unknown) => {
@@ -268,7 +268,7 @@ export default function GameSession({ initialScope }: GameSessionProps) {
     if (!location) return;
 
     const distanceKm = haversineDistanceKm(guess, location.actual);
-    const score = scoreFromDistance(distanceKm, diagonalKm);
+    const score = scoreFromDistance(distanceKm, halfScoreKm);
 
     const round: CompletedRound = {
       roundIndex: state.roundIndex,
@@ -323,7 +323,14 @@ export default function GameSession({ initialScope }: GameSessionProps) {
     const round = state.rounds[state.roundIndex];
     if (!round) return null;
     const aiResult: AiRoundResult = state.aiResults[round.roundIndex] ?? { status: "pending" };
-    return <FeedbackScreen round={round} aiResult={aiResult} onNext={handleNext} />;
+    return (
+      <FeedbackScreen
+        round={round}
+        aiResult={aiResult}
+        scope={initialScope}
+        onNext={handleNext}
+      />
+    );
   }
 
   if (state.phase === "summary") {

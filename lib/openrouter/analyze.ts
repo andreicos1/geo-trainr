@@ -13,7 +13,7 @@ import {
   getCountriesForContinent,
   findCountryByPoint,
 } from "@/lib/geo/countries-coverage";
-import { haversineDistanceKm, mapDiagonalKm, scoreFromDistance } from "@/lib/geo/scoring";
+import { haversineDistanceKm, mapHalfScoreKm, scoreFromDistance } from "@/lib/geo/scoring";
 import { MAX_SCORE_PER_ROUND } from "@/types/game";
 import type { AiGuess, Clue, GameScope, SelfCheck, RoundAnalysis } from "@/types/game";
 
@@ -101,7 +101,18 @@ function verdictFromScore(score: number): SelfCheck["verdict"] {
 function describeScopeConstraint(scope: GameScope): string {
   if (scope.type === "country") {
     const name = getCountry(scope.code)?.name ?? scope.code;
-    return `This game is restricted to a single country: the image is guaranteed to be from somewhere inside ${name}. Set "country" to "${name}" and give your best-guess latitude/longitude within it.`;
+    // The country is a given here, so an analysis that argues its way to
+    // "${name}" tells the player nothing they didn't already know. Redirect
+    // every part of the output that would otherwise be country-level —
+    // reasoning, confidence, the clues themselves — at the only open
+    // question: where inside ${name}.
+    return `This game is restricted to a single country: the image is guaranteed to be from somewhere inside ${name}, and the player knows that. Set "country" to "${name}".
+
+Because the country is given, identifying it is worth nothing here. Do not argue your way to ${name}, and do not present a clue as informative when all it does is confirm a country that was never in question. The entire task is placing the pin *within* ${name}:
+- Prefer clues that discriminate between parts of ${name} — regional signage and place names, local plates or area codes, terrain, vegetation, climate cues, building materials and roofing, road class and infrastructure age, urban vs. rural density.
+- "reasoningSummary" must explain how the clues narrow the location to a particular part of ${name}, never how they establish ${name}.
+- "area" is the region or city you settled on, and "confidence" is how sure you are of *that area* — not of the country, which would trivially be 1.
+- If the image genuinely doesn't narrow things down within ${name}, set "area" to null and say so plainly in "reasoningSummary". That is a more useful answer than inventing a region.`;
   }
 
   if (scope.type === "continent") {
@@ -121,7 +132,7 @@ ${describeScopeConstraint(scope)}
 
 Identify 3 to 8 distinct, specific visual clues in the image that a skilled player would use to narrow down the location: things like road markings and signage, license plates, architecture and roofing style, vegetation and terrain, road/bollard/pole design, driving side, writing systems or languages visible, and similar. For each clue, give a tight bounding box around exactly where it appears in the image, normalized to a 0-1 fraction of the image's width and height (x/y is the top-left corner).
 
-Then give your own single best-guess location: a country, latitude/longitude, and a confidence from 0 to 1. Base the guess on the clues you identified, weighing them the way an expert would.
+Then give your own single best-guess location: a country, the specific area (city/region) when the image narrows it that far, latitude/longitude, and a confidence from 0 to 1. Base the guess on the clues you identified, weighing them the way an expert would.
 
 Be specific and concrete in every clue explanation — name the actual detail you're looking at, not a generic category. This applies especially to the final pin placement: don't silently default to a country's capital or biggest city. If a clue narrows the location to a specific city, region, coastline, or landscape, say which one and why; if nothing in the image narrows it beyond the country itself, say that explicitly rather than picking an unjustified specific point.
 
@@ -157,8 +168,9 @@ function buildSelfCheckPrompt(params: {
   actualCountry?: string;
   score: number;
   verdict: SelfCheck["verdict"];
+  scope: GameScope;
 }): string {
-  const { clues, aiGuess, actualLat, actualLng, actualCountry, score, verdict } = params;
+  const { clues, aiGuess, actualLat, actualLng, actualCountry, score, verdict, scope } = params;
   const cluesText = clues
     .map(
       (c, i) =>
@@ -166,18 +178,34 @@ function buildSelfCheckPrompt(params: {
     )
     .join("\n");
 
+  // In a country-locked game the country was handed to the original call, so
+  // a critique that credits it for "correctly identifying ${country}" — or
+  // that treats the revealed country as news — is empty. Only the
+  // within-country placement was ever at stake.
+  const countryLocked = scope.type === "country";
+  const guessLine = `Your guess: ${aiGuess.area ? `${aiGuess.area}, ` : ""}${aiGuess.country} (${aiGuess.lat.toFixed(4)}, ${aiGuess.lng.toFixed(4)}), confidence ${aiGuess.confidence}.`;
+  const reasoningLabel = countryLocked
+    ? `Your reasoning for that part of ${aiGuess.country}`
+    : "Your country-level reasoning";
+  const revealLine = countryLocked
+    ? `The real location has now been revealed: latitude ${actualLat.toFixed(4)}, longitude ${actualLng.toFixed(4)} — inside ${aiGuess.country}, as it was always going to be.`
+    : `The real location has now been revealed${actualCountry ? `: it's in ${actualCountry}` : ""}, at latitude ${actualLat.toFixed(4)}, longitude ${actualLng.toFixed(4)}.`;
+  const scopeNote = countryLocked
+    ? ` This game was locked to ${aiGuess.country}, so the country was given to you up front — give yourself no credit for it and treat only the placement within ${aiGuess.country} as the thing being judged.`
+    : "";
+
   return `Here is the analysis you just gave for this Street View image:
 
 Clues you identified:
 ${cluesText}
 
-Your guess: ${aiGuess.country} (${aiGuess.lat.toFixed(4)}, ${aiGuess.lng.toFixed(4)}), confidence ${aiGuess.confidence}.
-Your country-level reasoning: ${aiGuess.reasoningSummary}
+${guessLine}
+${reasoningLabel}: ${aiGuess.reasoningSummary}
 Why you placed the pin there specifically: ${aiGuess.pinpointReasoning}
 
-The real location has now been revealed${actualCountry ? `: it's in ${actualCountry}` : ""}, at latitude ${actualLat.toFixed(4)}, longitude ${actualLng.toFixed(4)}.
+${revealLine}
 
-The scoring system has already graded this guess at ${score}/${MAX_SCORE_PER_ROUND} and classified it as "${verdict}" based purely on distance — that part is fixed and not yours to reassess. Your job here is just the narrative: look at the image again with the real answer in mind and be honest and specific about *why* it landed there. Did any of the clues you named point the wrong way or get a detail wrong? Only flag mistakes that actually matter — don't invent nitpicks to fill the list, and don't contradict the "${verdict}" rating in your summary (e.g. don't call it a near-miss if it was rated correct). Call the ${SELF_CHECK_TOOL_NAME} tool exactly once.`;
+The scoring system has already graded this guess at ${score}/${MAX_SCORE_PER_ROUND} and classified it as "${verdict}" based purely on distance — that part is fixed and not yours to reassess.${scopeNote} Your job here is just the narrative: look at the image again with the real answer in mind and be honest and specific about *why* it landed there. Did any of the clues you named point the wrong way or get a detail wrong? Only flag mistakes that actually matter — don't invent nitpicks to fill the list, and don't contradict the "${verdict}" rating in your summary (e.g. don't call it a near-miss if it was rated correct). Call the ${SELF_CHECK_TOOL_NAME} tool exactly once.`;
 }
 
 /**
@@ -208,7 +236,7 @@ async function getSelfCheck(params: {
   const actualCountry = params.actualCountry || findCountryByPoint(actualLat, actualLng)?.name;
 
   const distanceKm = haversineDistanceKm({ lat: aiGuess.lat, lng: aiGuess.lng }, { lat: actualLat, lng: actualLng });
-  const score = scoreFromDistance(distanceKm, mapDiagonalKm(scope));
+  const score = scoreFromDistance(distanceKm, mapHalfScoreKm(scope));
   const verdict = verdictFromScore(score);
 
   try {
@@ -232,6 +260,7 @@ async function getSelfCheck(params: {
                 actualCountry,
                 score,
                 verdict,
+                scope,
               }),
             },
           ],
@@ -299,6 +328,7 @@ export async function analyzeRound(
 
   const aiGuess: AiGuess = {
     country: parsed.guess.country,
+    area: parsed.guess.area ?? undefined,
     lat: parsed.guess.lat,
     lng: parsed.guess.lng,
     confidence: clamp01(parsed.guess.confidence),

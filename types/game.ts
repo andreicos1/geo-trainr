@@ -23,6 +23,14 @@ export interface Clue {
 
 export interface AiGuess {
   country: string;
+  /**
+   * The named region/city the pin falls in, when the image narrowed it that
+   * far. Optional: the model returns nothing here when the image supports no
+   * more than a country-level read, and older persisted games predate the
+   * field. Carries the whole overview in country-locked games, where the
+   * country itself is given and says nothing.
+   */
+  area?: string;
   lat: number;
   lng: number;
   confidence: number;

@@ -246,8 +246,7 @@ function coveringLongitudeArc(ranges: [west: number, east: number][]): [number, 
  * "France" also means Réunion, Mayotte, Guadeloupe, Martinique and French
  * Guiana — together 12.4% of the feature's area, nearly all of it French
  * Guiana. Taken literally that puts 1 in 7 France rounds in South America or
- * the Indian Ocean, and stretches Europe's scoring diagonal to 12,953km,
- * wider than Asia's.
+ * the Indian Ocean — a France game that isn't one.
  *
  * The measured separations leave a clean gap to cut in: the furthest
  * landmass that is uncontroversially part of its country is the end of the
@@ -313,6 +312,130 @@ export function countryBbox(code: string): Bbox | undefined {
 }
 
 /**
+ * Area, centre of mass and internal spread of one landmass, measured on a
+ * local equirectangular plane about the landmass's own bounding-box centre.
+ *
+ * The plane uses a single `cos(lat)` for the whole ring, so east-west
+ * distances drift for a shape as tall as Russia. That is deliberate: this
+ * feeds a scoring *scale*, where a few percent moves a score by a few
+ * points, and the closed-form shoelace moments cost one pass over vertices
+ * the module has already decoded.
+ *
+ * Holes are ignored — the lakes and enclaves they describe are small enough
+ * that neither the weight nor the spread notices them.
+ */
+interface Moments {
+  areaKm2: number;
+  /** Centre of mass, back in degrees. */
+  lat: number;
+  lng: number;
+  /** Mean squared distance (km²) from that centre, over the landmass. */
+  varianceKm2: number;
+}
+
+function polygonMoments(polygon: CountryPolygon): Moments | undefined {
+  const [south, west, north, east] = polygon.bbox;
+  const lat0 = (south + north) / 2;
+  const lng0 = (west + east) / 2;
+  const kx = Math.cos(lat0 * DEG) * DEG * EARTH_RADIUS_KM;
+  const ky = DEG * EARTH_RADIUS_KM;
+
+  const ring = polygon.rings[0];
+  let doubleArea = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXX = 0;
+  let sumYY = 0;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const xj = (ring[j][0] - lng0) * kx;
+    const yj = (ring[j][1] - lat0) * ky;
+    const xi = (ring[i][0] - lng0) * kx;
+    const yi = (ring[i][1] - lat0) * ky;
+    const cross = xj * yi - xi * yj;
+    doubleArea += cross;
+    sumX += (xj + xi) * cross;
+    sumY += (yj + yi) * cross;
+    sumXX += (xj * xj + xj * xi + xi * xi) * cross;
+    sumYY += (yj * yj + yj * yi + yi * yi) * cross;
+  }
+  if (doubleArea === 0) return undefined; // degenerate sliver
+
+  const centroidX = sumX / (3 * doubleArea);
+  const centroidY = sumY / (3 * doubleArea);
+  const varianceX = sumXX / (6 * doubleArea) - centroidX * centroidX;
+  const varianceY = sumYY / (6 * doubleArea) - centroidY * centroidY;
+
+  return {
+    areaKm2: Math.abs(doubleArea) / 2,
+    lat: lat0 + centroidY / ky,
+    lng: lng0 + centroidX / kx,
+    varianceKm2: Math.max(0, varianceX) + Math.max(0, varianceY),
+  };
+}
+
+const MOMENTS = new Map<CountryPolygon, Moments>();
+for (const polygon of POLYGONS) {
+  const moments = polygonMoments(polygon);
+  if (moments) MOMENTS.set(polygon, moments);
+}
+
+/**
+ * How far apart two random rounds in this play area typically fall, in km —
+ * the scale scoring grades against.
+ *
+ * This replaces the corner-to-corner diagonal of the play area's bounding
+ * box, which measured the wrong thing in two ways. It ignored *where inside
+ * the box the land is*, so a country that owns a distant island was graded
+ * on a box mostly full of ocean: New Zealand's Chathams stretched its box to
+ * 5,316km and Portugal's Azores stretched its to 2,441km, making both
+ * roughly five times more forgiving than an equally sized compact country.
+ * And it keyed on the two extreme corners, so the single furthest rock
+ * decided the curve for every round.
+ *
+ * Weighting each landmass by its area fixes both: the Chathams carry their
+ * 0.1% of New Zealand's land and move the scale by nothing. The value is
+ * `sqrt(2 × variance)` of a uniformly drawn point — a standard-deviation
+ * measure of spread that lands within about 10% of the mean distance between
+ * two random points for shapes from a disc to the whole globe (for which it
+ * is exactly πR/2 = 10,007km).
+ */
+export function playAreaSpreadKm(codes: Iterable<string>): number {
+  let totalArea = 0;
+  let withinVariance = 0;
+  // Landmass centres are averaged as 3D unit vectors rather than as
+  // lat/lng pairs, which would otherwise average Alaska and the Aleutians
+  // to a point in the Atlantic and break down entirely at the poles.
+  let vx = 0;
+  let vy = 0;
+  let vz = 0;
+
+  for (const code of codes) {
+    for (const polygon of POLYGONS_BY_CODE.get(code) ?? []) {
+      const moments = MOMENTS.get(polygon);
+      if (!moments) continue;
+      const { areaKm2, lat, lng, varianceKm2 } = moments;
+      const cosLat = Math.cos(lat * DEG);
+      totalArea += areaKm2;
+      withinVariance += areaKm2 * varianceKm2;
+      vx += areaKm2 * cosLat * Math.cos(lng * DEG);
+      vy += areaKm2 * cosLat * Math.sin(lng * DEG);
+      vz += areaKm2 * Math.sin(lat * DEG);
+    }
+  }
+  if (totalArea === 0) return 0;
+
+  // Spread splits into the scatter *between* landmasses and the spread
+  // *within* each one. For unit vectors the first is just 1 - |mean|².
+  const meanLength = Math.hypot(vx, vy, vz) / totalArea;
+  const betweenVariance = EARTH_RADIUS_KM * EARTH_RADIUS_KM * (1 - meanLength * meanLength);
+  const chord = Math.sqrt(2 * (betweenVariance + withinVariance / totalArea));
+
+  // Straight-line chords fall well short of ground distance once a play area
+  // spans continents, so read the chord back off the sphere.
+  return 2 * EARTH_RADIUS_KM * Math.asin(Math.min(1, chord / (2 * EARTH_RADIUS_KM)));
+}
+
+/**
  * One individual landmass — the unit the location sampler draws from.
  * Opaque on purpose: callers pick one, sample inside its `bbox`, and ask
  * `areaContains` whether the point stuck.
@@ -364,14 +487,6 @@ export function areaContains(area: SamplingArea, lat: number, lng: number): bool
     if (pointInRing(x, lat, polygon.rings[i])) return false;
   }
   return true;
-}
-
-/** The smallest box containing every given box, antimeridian-aware. */
-export function unionBbox(boxes: Bbox[]): Bbox {
-  const south = Math.min(...boxes.map((b) => b[0]));
-  const north = Math.max(...boxes.map((b) => b[2]));
-  const [west, east] = coveringLongitudeArc(boxes.map((b): [number, number] => [b[1], b[3]]));
-  return [south, west, north, east];
 }
 
 /**
